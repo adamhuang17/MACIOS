@@ -416,7 +416,7 @@ class TestPipelineGuardIntegration:
         from agent_hub.core.models import TaskInput, UserContext
 
         with (
-            patch("agent_hub.core.pipeline.IntentRouter"),
+            patch("agent_hub.core.pipeline.DecisionRouter"),
             patch("agent_hub.core.pipeline.MemoryManager"),
             patch("agent_hub.core.pipeline.LLMAgent"),
             patch("agent_hub.core.pipeline.RetrievalAgent"),

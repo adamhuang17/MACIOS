@@ -119,19 +119,34 @@ class ToolAgent(BaseAgent):
     ) -> tuple[str, dict[str, Any]] | None:
         """从描述中解析工具名和参数。
 
-        支持格式: ``工具名(参数)``
+        支持格式: ``工具名(参数)``，正确处理嵌套括号。
 
         Examples:
-            - ``calculator(2+3*4)`` → ``("calculator", {"expression": "2+3*4"})``
+            - ``calculator((2+3)*4)`` → ``("calculator", {"expression": "(2+3)*4"})``
             - ``file_read(path=/tmp/a.txt)`` → ``("file_read", {"path": "/tmp/a.txt"})``
         """
-        pattern = r"(\w+)\(([^)]*)\)"
-        match = re.search(pattern, description)
-        if not match:
+        # 先匹配工具名 + 左括号
+        name_match = re.search(r"(\w+)\(", description)
+        if not name_match:
             return None
 
-        tool_name = match.group(1)
-        raw_args = match.group(2).strip()
+        tool_name = name_match.group(1)
+        start = name_match.end()  # '(' 后一位
+
+        # 平衡括号匹配：找到对应的右括号
+        depth = 1
+        pos = start
+        while pos < len(description) and depth > 0:
+            if description[pos] == "(":
+                depth += 1
+            elif description[pos] == ")":
+                depth -= 1
+            pos += 1
+
+        if depth != 0:
+            return None
+
+        raw_args = description[start : pos - 1].strip()
 
         if not raw_args:
             return tool_name, {}

@@ -1,8 +1,8 @@
 """核心 Pydantic 数据模型。
 
 定义了多 Agent 协同系统中流转的全部数据结构，涵盖：
-用户上下文、任务输入/输出、路由结果、子任务、工具规范、
-Agent 执行结果、记忆条目。
+用户上下文（Layer 1 Policy Gate）、任务输入、路由决策（Layer 2）、
+子任务、工具规范、Agent 执行结果、记忆条目。
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from agent_hub.core.enums import IntentType, UserRole
+from agent_hub.core.enums import ExecutionMode, UserRole
 
 
 # ── 用户上下文 ────────────────────────────────────────
@@ -63,6 +63,13 @@ class TaskInput(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
     parent_trace_id: Optional[str] = None
 
+    # ── Layer 1: Policy Gate 输入事实字段（由通道侧组装，可选）──
+    has_files: bool = False
+    file_types: list[str] = Field(default_factory=list)
+    is_at_bot: bool = False
+    is_command_prefix: bool = False
+    safety_score: float = 0.0
+
 
 # ── 子任务 & 路由结果 ────────────────────────────────
 
@@ -77,35 +84,50 @@ class SubTask(BaseModel):
         subtask_id: 子任务唯一标识。
         description: 子任务自然语言描述。
         required_agents: 需要调用的 Agent 类型名称列表。
-        priority: 优先级，1 为最高。
+        priority: 优先级（1 最高，5 最低）。
         depends_on: 依赖的子任务 ID 列表（用于 DAG 编排）。
     """
 
     subtask_id: str
     description: str
     required_agents: list[str]
-    priority: int = 1
+    priority: int = Field(default=1, ge=1, le=5, description="优先级（1 最高，5 最低）")
     depends_on: list[str] = Field(default_factory=list)
 
 
-class RoutingResult(BaseModel):
-    """路由层输出：意图分类 + 任务拆解。
+class RoutingDecision(BaseModel):
+    """路由决策层输出（Layer 2）。
+
+    不再是固定语义意图分类，而是"下一步如何处理"的决策对象。
+    由 DecisionRouter 输出，Pipeline 按 ``mode`` 分流执行。
 
     当 ``confidence < 0.7`` 时自动将 ``low_confidence`` 置为 ``True``，
     下游可据此触发人工确认流程。
 
     Attributes:
-        intent: 识别出的用户意图类型。
-        confidence: 分类置信度，范围 [0.0, 1.0]。
-        reasoning: LLM 对分类决策的解释。
-        sub_tasks: 拆解出的子任务列表。
+        mode: 执行模式（ignore/qa/plan/act/delegate/repair）。
+        targets: 目标 flow 或 agent 名称列表。
+        requires_admin: 是否必须管理员才能执行。
+        private_only: 是否只能在私聊中触发。
+        allow_in_group: 群聊中是否允许触发。
+        capabilities: 所需能力标签（retrieval/tool/file_ingest/openclaw/memory_write）。
+        confidence: 路由决策置信度，范围 [0.0, 1.0]。
+        reasoning: LLM 对路由决策的解释。
+        plan: 拆解出的子任务 DAG。
+        branch_label: 当前 flow 的局部分支标签（Layer 3 内部使用）。
         low_confidence: 置信度是否低于阈值。
     """
 
-    intent: IntentType
+    mode: ExecutionMode
+    targets: list[str] = Field(default_factory=list)
+    requires_admin: bool = False
+    private_only: bool = False
+    allow_in_group: bool = True
+    capabilities: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str
-    sub_tasks: list[SubTask] = Field(default_factory=list)
+    plan: list[SubTask] = Field(default_factory=list)
+    branch_label: str = ""
     low_confidence: bool = False
 
 

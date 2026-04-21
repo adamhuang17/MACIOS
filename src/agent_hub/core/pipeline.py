@@ -29,16 +29,16 @@ from typing import TYPE_CHECKING
 import structlog
 
 from agent_hub.agents import LLMAgent, ReflectionAgent, RetrievalAgent, ToolAgent, ToolRegistry
-from agent_hub.core.enums import IntentType, UserRole
+from agent_hub.core.enums import ExecutionMode, UserRole
 from agent_hub.core.models import (
     AgentResult,
     MemoryEntry,
-    RoutingResult,
+    RoutingDecision,
     SubTask,
     TaskInput,
     TaskOutput,
 )
-from agent_hub.core.router import IntentRouter
+from agent_hub.core.router import DecisionRouter
 from agent_hub.core.tracer import SpanContext, get_current_trace_id
 from agent_hub.memory import MemoryManager
 from agent_hub.rag.pipeline import RAGPipeline
@@ -109,7 +109,7 @@ class AgentPipeline:
         self._settings = settings
 
         # 路由器
-        self._router = IntentRouter(settings=settings)
+        self._router = DecisionRouter(settings=settings)
 
         # 记忆管理器
         self._memory = MemoryManager(vault_path=settings.obsidian_vault_path)
@@ -185,17 +185,17 @@ class AgentPipeline:
         # 路由
         routing = await self._router.route(task_input.raw_message, user_ctx)
 
-        if routing.intent == IntentType.GROUP_CHAT or routing.low_confidence:
+        if routing.mode == ExecutionMode.IGNORE or routing.low_confidence:
             yield {"type": "token", "content": self._build_fallback_response(routing)}
             return
 
-        if not routing.sub_tasks:
+        if not routing.plan:
             routing = self._ensure_default_subtask(routing, task_input.raw_message)
 
         routing = self._postprocess_subtasks(routing)
 
         # 逐任务流式执行
-        for subtask in routing.sub_tasks:
+        for subtask in routing.plan:
             agent_type = subtask.required_agents[0] if subtask.required_agents else "llm_agent"
             agent = self._agents.get(agent_type)
 
@@ -272,13 +272,13 @@ class AgentPipeline:
                         user_ctx,
                     )
                     root_span.add_event("routing_done", {
-                        "intent": routing.intent.value,
+                        "mode": routing.mode.value,
                         "confidence": routing.confidence,
-                        "subtask_count": len(routing.sub_tasks),
+                        "plan_count": len(routing.plan),
                     })
 
-                # ── Step 2: GROUP_CHAT / 低置信度降级 ────
-                if routing.intent == IntentType.GROUP_CHAT or routing.low_confidence:
+                # ── Step 2: ignore / 低置信度降级 ────────
+                if routing.mode == ExecutionMode.IGNORE or routing.low_confidence:
                     return TaskOutput(
                         trace_id=trace_id,
                         user_id=user_ctx.user_id,
@@ -290,22 +290,19 @@ class AgentPipeline:
                     )
 
                 # ── Step 3: 权限校验 ─────────────────────
-                if routing.intent == IntentType.ADMIN_COMMAND:
-                    if user_ctx.role != UserRole.ADMIN:
-                        return TaskOutput(
-                            trace_id=trace_id,
-                            user_id=user_ctx.user_id,
-                            response="⚠️ 权限不足：管理员命令仅限管理员使用。",
-                            agent_results=[],
-                            memory_saved=[],
-                            total_duration_ms=self._elapsed_ms(start_time),
-                            status="permission_denied",
-                        )
+                if routing.requires_admin and user_ctx.role != UserRole.ADMIN:
+                    return TaskOutput(
+                        trace_id=trace_id,
+                        user_id=user_ctx.user_id,
+                        response="⚠️ 权限不足：该操作仅限管理员使用。",
+                        agent_results=[],
+                        memory_saved=[],
+                        total_duration_ms=self._elapsed_ms(start_time),
+                        status="permission_denied",
+                    )
 
-                # ── Step 3.5: 兜底 — 无子任务但意图明确时，自动生成默认子任务
-                if not routing.sub_tasks and routing.intent not in (
-                    IntentType.GROUP_CHAT,
-                ):
+                # ── Step 3.5: 兜底 — 无计划但 mode 可执行时，自动生成默认子任务
+                if not routing.plan and routing.mode != ExecutionMode.IGNORE:
                     routing = self._ensure_default_subtask(
                         routing, task_input.raw_message,
                     )
@@ -315,7 +312,7 @@ class AgentPipeline:
 
                 # ── Step 4: Agent 执行（DAG 并行） ───────
                 agent_results = await self._execute_dag(
-                    routing.sub_tasks, task_input, trace_id,
+                    routing.plan, task_input, trace_id,
                 )
 
                 # ── Step 5: 构建回复 ─────────────────────
@@ -330,7 +327,7 @@ class AgentPipeline:
                 logger.info(
                     "pipeline_complete",
                     trace_id=trace_id,
-                    intent=routing.intent.value,
+                    mode=routing.mode.value,
                     duration_ms=total_ms,
                     status="success",
                 )
@@ -421,7 +418,7 @@ class AgentPipeline:
     # ── 回复构建 ─────────────────────────────────────
 
     @staticmethod
-    def _build_response(routing: RoutingResult, results: list[AgentResult]) -> str:
+    def _build_response(routing: RoutingDecision, results: list[AgentResult]) -> str:
         """从 Agent 结果构建最终回复。"""
         if not results:
             return "任务已接收，未触发具体执行。"
@@ -436,8 +433,8 @@ class AgentPipeline:
         return "\n\n".join(parts) if parts else "任务执行完毕，但无有效输出。"
 
     @staticmethod
-    def _build_fallback_response(routing: RoutingResult) -> str:
-        """低置信度 / 群聊时的兜底回复。"""
+    def _build_fallback_response(routing: RoutingDecision) -> str:
+        """低置信度 / ignore 模式时的兜底回复。"""
         if routing.low_confidence:
             return (
                 "我不太确定您的意图（置信度较低）。"
@@ -451,7 +448,7 @@ class AgentPipeline:
     def _save_memory(
         self,
         task_input: TaskInput,
-        routing: RoutingResult,
+        routing: RoutingDecision,
         results: list[AgentResult],
         session_id: str,
     ) -> list[MemoryEntry]:
@@ -465,12 +462,12 @@ class AgentPipeline:
             user_id=user_id,
             content=f"用户: {task_input.raw_message}",
             memory_type="short_term",
-            tags=["user_request", routing.intent.value],
+            tags=["user_request", routing.mode.value],
         )
         saved.append(req_entry)
 
         # 写入执行摘要（持久态）
-        summary_parts = [f"意图: {routing.intent.value}（置信度{routing.confidence}）"]
+        summary_parts = [f"模式: {routing.mode.value}（置信度{routing.confidence}）"]
         for r in results:
             status_mark = "✓" if r.success else "✗"
             summary_parts.append(f"[{r.agent_name}] {status_mark} {r.output or r.error}")
@@ -480,7 +477,7 @@ class AgentPipeline:
             user_id=user_id,
             content="\n".join(summary_parts),
             memory_type="long_term",
-            tags=["execution_summary", routing.intent.value],
+            tags=["execution_summary", routing.mode.value],
         )
         saved.append(summary_entry)
 
@@ -488,30 +485,33 @@ class AgentPipeline:
 
     # ── 工具方法 ─────────────────────────────────────
 
-    # ── 意图 → 默认 Agent 映射 ───────────────────────
+    # ── 执行模式 → 默认 Agent 映射 ──────────────────
 
-    _INTENT_AGENT_MAP: dict[IntentType, list[str]] = {
-        IntentType.TASK_GENERATION: ["llm_agent"],
-        IntentType.TOOL_EXECUTION: ["llm_agent", "tool_agent"],
-        IntentType.RETRIEVAL: ["retrieval_agent"],
-        IntentType.FILE_PROCESSING: ["llm_agent"],
-        IntentType.ADMIN_COMMAND: ["tool_agent"],
-        IntentType.REFLECTION: ["reflection_agent"],
+    _MODE_AGENT_MAP: dict[ExecutionMode, list[str]] = {
+        ExecutionMode.PLAN: ["llm_agent"],
+        ExecutionMode.ACT: ["llm_agent", "tool_agent"],
+        ExecutionMode.QA: ["retrieval_agent"],
+        ExecutionMode.DELEGATE: ["tool_agent"],
+        ExecutionMode.REPAIR: ["reflection_agent"],
     }
 
-    def _postprocess_subtasks(self, routing: RoutingResult) -> RoutingResult:
-        """修正子任务 required_agents，确保 TOOL_EXECUTION 走 ReAct 路径。
+    def _postprocess_subtasks(self, routing: RoutingDecision) -> RoutingDecision:
+        """修正子任务 required_agents，确保 act/tool 走 ReAct 路径。
 
         Router LLM 可能生成 required_agents=["tool_agent"]，导致任务直接交给
         ToolAgent 而非 LLMAgent 的 ReAct 循环。此方法将其修正为
         ["llm_agent", "tool_agent"]，确保 LLMAgent 通过 ReAct 调用工具。
         """
-        if routing.intent != IntentType.TOOL_EXECUTION or not routing.sub_tasks:
+        needs_react = (
+            routing.mode == ExecutionMode.ACT
+            or "tool" in routing.capabilities
+        )
+        if not needs_react or not routing.plan:
             return routing
 
         patched = False
         new_tasks = []
-        for st in routing.sub_tasks:
+        for st in routing.plan:
             agents = st.required_agents
             if agents and agents[0] == "tool_agent" and "llm_agent" not in agents:
                 agents = ["llm_agent", *agents]
@@ -521,25 +521,25 @@ class AgentPipeline:
         if patched:
             logger.info(
                 "pipeline.postprocess_subtasks",
-                intent=routing.intent.value,
+                mode=routing.mode.value,
                 note="required_agents patched to trigger ReAct",
             )
-            return routing.model_copy(update={"sub_tasks": new_tasks})
+            return routing.model_copy(update={"plan": new_tasks})
         return routing
 
     def _ensure_default_subtask(
         self,
-        routing: RoutingResult,
+        routing: RoutingDecision,
         raw_message: str,
-    ) -> RoutingResult:
-        """当 sub_tasks 为空且意图在映射表中时，自动生成默认子任务。"""
-        agents = self._INTENT_AGENT_MAP.get(routing.intent)
+    ) -> RoutingDecision:
+        """当 plan 为空且 mode 在映射表中时，自动生成默认子任务。"""
+        agents = self._MODE_AGENT_MAP.get(routing.mode)
         if not agents:
             return routing
 
         logger.info(
             "pipeline.fallback_subtask",
-            intent=routing.intent.value,
+            mode=routing.mode.value,
             agents=agents,
         )
         default_subtask = SubTask(
@@ -549,7 +549,7 @@ class AgentPipeline:
             priority=1,
             depends_on=[],
         )
-        return routing.model_copy(update={"sub_tasks": [default_subtask]})
+        return routing.model_copy(update={"plan": [default_subtask]})
 
     @staticmethod
     def _elapsed_ms(start: float) -> int:

@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from agent_hub.core.enums import IntentType
-from agent_hub.core.models import RoutingResult, SubTask
+from agent_hub.core.enums import ExecutionMode
+from agent_hub.core.models import RoutingDecision, SubTask
 from agent_hub.core.pipeline import AgentPipeline
 from agent_hub.core.router import _SYSTEM_PROMPT
 
@@ -44,17 +44,17 @@ class TestPipelineFallback:
             return AgentPipeline(settings)
 
     def test_fallback_tool_execution(self, pipeline: AgentPipeline) -> None:
-        """TOOL_EXECUTION + 空 sub_tasks → 兜底生成含 tool_agent 的子任务。"""
-        routing = RoutingResult(
-            intent=IntentType.TOOL_EXECUTION,
+        """ACT + 空 plan → 兜底生成含 tool_agent 的子任务。"""
+        routing = RoutingDecision(
+            mode=ExecutionMode.ACT,
             confidence=0.9,
             reasoning="用户要求计算",
-            sub_tasks=[],
+            plan=[],
         )
         result = pipeline._ensure_default_subtask(routing, "帮我算一下 2+3")
 
-        assert len(result.sub_tasks) == 1
-        st = result.sub_tasks[0]
+        assert len(result.plan) == 1
+        st = result.plan[0]
         assert st.subtask_id == "subtask_fallback_1"
         assert st.description == "帮我算一下 2+3"
         assert "llm_agent" in st.required_agents
@@ -63,44 +63,44 @@ class TestPipelineFallback:
         assert st.depends_on == []
 
     def test_fallback_task_generation(self, pipeline: AgentPipeline) -> None:
-        """TASK_GENERATION + 空 sub_tasks → 兜底生成 llm_agent 子任务。"""
-        routing = RoutingResult(
-            intent=IntentType.TASK_GENERATION,
+        """PLAN + 空 plan → 兜底 → llm_agent 子任务。"""
+        routing = RoutingDecision(
+            mode=ExecutionMode.PLAN,
             confidence=0.85,
             reasoning="用户要写代码",
-            sub_tasks=[],
+            plan=[],
         )
         result = pipeline._ensure_default_subtask(routing, "写一个快速排序")
 
-        assert len(result.sub_tasks) == 1
-        st = result.sub_tasks[0]
+        assert len(result.plan) == 1
+        st = result.plan[0]
         assert st.required_agents == ["llm_agent"]
         assert st.description == "写一个快速排序"
 
     def test_fallback_retrieval(self, pipeline: AgentPipeline) -> None:
-        """RETRIEVAL + 空 sub_tasks → 兜底生成 retrieval_agent 子任务。"""
-        routing = RoutingResult(
-            intent=IntentType.RETRIEVAL,
+        """QA + 空 plan → 兜底生成 retrieval_agent 子任务。"""
+        routing = RoutingDecision(
+            mode=ExecutionMode.QA,
             confidence=0.8,
             reasoning="用户查询知识",
-            sub_tasks=[],
+            plan=[],
         )
         result = pipeline._ensure_default_subtask(routing, "RAG是什么")
 
-        assert len(result.sub_tasks) == 1
-        assert result.sub_tasks[0].required_agents == ["retrieval_agent"]
+        assert len(result.plan) == 1
+        assert result.plan[0].required_agents == ["retrieval_agent"]
 
     def test_no_fallback_group_chat(self, pipeline: AgentPipeline) -> None:
-        """GROUP_CHAT → _ensure_default_subtask 不生成子任务。"""
-        routing = RoutingResult(
-            intent=IntentType.GROUP_CHAT,
+        """IGNORE → _ensure_default_subtask 不生成子任务。"""
+        routing = RoutingDecision(
+            mode=ExecutionMode.IGNORE,
             confidence=0.95,
             reasoning="普通群聊",
-            sub_tasks=[],
+            plan=[],
         )
         result = pipeline._ensure_default_subtask(routing, "哈哈哈")
 
-        assert len(result.sub_tasks) == 0
+        assert len(result.plan) == 0
 
     def test_no_fallback_when_subtasks_exist(self, pipeline: AgentPipeline) -> None:
         """已有 sub_tasks 时，run() 中的条件不会触发兜底。"""
@@ -109,16 +109,14 @@ class TestPipelineFallback:
             description="已有任务",
             required_agents=["llm_agent"],
         )
-        routing = RoutingResult(
-            intent=IntentType.TASK_GENERATION,
+        routing = RoutingDecision(
+            mode=ExecutionMode.PLAN,
             confidence=0.9,
             reasoning="测试",
-            sub_tasks=[existing],
+            plan=[existing],
         )
         # 模拟 run() 中的条件判断
-        should_fallback = not routing.sub_tasks and routing.intent not in (
-            IntentType.GROUP_CHAT,
-        )
+        should_fallback = not routing.plan and routing.mode != ExecutionMode.IGNORE
         assert should_fallback is False
 
 
@@ -129,5 +127,5 @@ class TestRouterPromptEnsuresSubtask:
         assert "必须至少生成一个子任务" in _SYSTEM_PROMPT
 
     def test_router_prompt_group_chat_exception(self) -> None:
-        assert "group_chat" in _SYSTEM_PROMPT
-        assert "返回空列表" in _SYSTEM_PROMPT
+        assert "ignore" in _SYSTEM_PROMPT
+        assert "空列表" in _SYSTEM_PROMPT

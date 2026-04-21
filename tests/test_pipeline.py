@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from agent_hub.config.settings import get_settings
-from agent_hub.core.enums import IntentType, UserRole
+from agent_hub.core.enums import ExecutionMode, UserRole
 from agent_hub.core.models import (
     AgentResult,
-    RoutingResult,
+    RoutingDecision,
     SubTask,
     TaskInput,
     UserContext,
@@ -113,9 +113,9 @@ class TestTopologicalLayers:
 # ── Pipeline 集成测试（mock LLM） ───────────────────
 
 
-def _mock_routing(intent: IntentType, confidence: float = 0.85, **kwargs) -> RoutingResult:
-    return RoutingResult(
-        intent=intent,
+def _mock_routing(mode: ExecutionMode, confidence: float = 0.85, **kwargs) -> RoutingDecision:
+    return RoutingDecision(
+        mode=mode,
         confidence=confidence,
         reasoning="mock reasoning",
         low_confidence=confidence < 0.7,
@@ -131,7 +131,7 @@ class TestPipelineGroupChatFallback:
             pipeline._router,
             "route",
             new_callable=AsyncMock,
-            return_value=_mock_routing(IntentType.GROUP_CHAT, 0.9),
+            return_value=_mock_routing(ExecutionMode.IGNORE, 0.9),
         ):
             result = await pipeline.run(_make_task("哈哈"))
             assert result.status == "fallback"
@@ -143,7 +143,7 @@ class TestPipelineGroupChatFallback:
             pipeline._router,
             "route",
             new_callable=AsyncMock,
-            return_value=_mock_routing(IntentType.TASK_GENERATION, 0.3),
+            return_value=_mock_routing(ExecutionMode.PLAN, 0.3),
         ):
             result = await pipeline.run(_make_task("嗯嗯"))
             assert result.status == "fallback"
@@ -157,18 +157,19 @@ class TestPipelineAdminPermission:
             pipeline._router,
             "route",
             new_callable=AsyncMock,
-            return_value=_mock_routing(IntentType.ADMIN_COMMAND, 0.95),
+            return_value=_mock_routing(ExecutionMode.DELEGATE, 0.95, requires_admin=True),
         ):
             result = await pipeline.run(_make_task("重启服务器", role=UserRole.USER))
             assert result.status == "permission_denied"
 
     @pytest.mark.asyncio
     async def test_admin_allowed_admin_command(self, pipeline: AgentPipeline) -> None:
-        """管理员执行管理员命令应被允许（进入 Agent 执行阶段）。"""
+        """管理员执行需要权限的操作应被允许（进入 Agent 执行阶段）。"""
         routing = _mock_routing(
-            IntentType.ADMIN_COMMAND,
+            ExecutionMode.DELEGATE,
             0.95,
-            sub_tasks=[
+            requires_admin=True,
+            plan=[
                 SubTask(
                     subtask_id="st1",
                     description="system_command(echo hello)",
@@ -195,7 +196,7 @@ class TestPipelineTraceId:
             pipeline._router,
             "route",
             new_callable=AsyncMock,
-            return_value=_mock_routing(IntentType.GROUP_CHAT),
+            return_value=_mock_routing(ExecutionMode.IGNORE),
         ):
             task = _make_task(trace_id="my-trace-123")
             result = await pipeline.run(task)
@@ -207,9 +208,9 @@ class TestPipelineAgentExecution:
     async def test_subtask_dispatched_to_agent(self, pipeline: AgentPipeline) -> None:
         """子任务应被分发到正确的 Agent 并返回结果。"""
         routing = _mock_routing(
-            IntentType.TASK_GENERATION,
+            ExecutionMode.PLAN,
             0.9,
-            sub_tasks=[
+            plan=[
                 SubTask(
                     subtask_id="st1",
                     description="写一个冒泡排序",
@@ -247,9 +248,9 @@ class TestPipelineAgentExecution:
     async def test_unknown_agent_type(self, pipeline: AgentPipeline) -> None:
         """未知 Agent 类型不应导致崩溃。"""
         routing = _mock_routing(
-            IntentType.TASK_GENERATION,
+            ExecutionMode.PLAN,
             0.9,
-            sub_tasks=[
+            plan=[
                 SubTask(
                     subtask_id="st1",
                     description="do something",

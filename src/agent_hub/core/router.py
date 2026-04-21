@@ -1,30 +1,30 @@
-"""意图识别路由器。
+"""路由决策器（DecisionRouter）。
 
-通过 OpenAI 兼容 API（智谱等）对用户自然语言消息进行
-意图分类，并将复杂请求拆解为可执行的子任务 DAG。
+通过 OpenAI 兼容 API（智谱等）对用户请求进行路由决策：
+输出执行模式（mode）、能力标签（capabilities）、子任务 DAG（plan），
+替代原来的全局 IntentType 语义分类。
 
 核心流程::
 
     raw_message + UserContext
         → LLM Structured Output（function calling）
-        → 权限过滤（ADMIN_COMMAND 降级）
-        → 置信度规则（低置信度降级）
-        → RoutingResult
+        → 置信度规则（低置信度降级为 ignore）
+        → RoutingDecision
 
 Example::
 
-    from agent_hub.core.router import IntentRouter
+    from agent_hub.core.router import DecisionRouter
     from agent_hub.core.models import UserContext
     from agent_hub.core.enums import UserRole
 
-    router = IntentRouter()
-    result = await router.route(
+    router = DecisionRouter()
+    decision = await router.route(
         raw_message="帮我写一个快速排序",
         user_context=UserContext(
             user_id="u001", role=UserRole.USER, channel="dingtalk",
         ),
     )
-    print(result.intent, result.confidence, result.sub_tasks)
+    print(decision.mode, decision.confidence, decision.plan)
 """
 
 from __future__ import annotations
@@ -38,48 +38,60 @@ from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from agent_hub.config.settings import Settings, get_settings
-from agent_hub.core.enums import IntentType, UserRole
-from agent_hub.core.models import RoutingResult, SubTask, UserContext
+from agent_hub.core.enums import ExecutionMode, UserRole
+from agent_hub.core.models import RoutingDecision, SubTask, UserContext
 
 logger = structlog.get_logger(__name__)
 
-# ── 意图分类 System Prompt ───────────────────────────
+# ── 路由决策 System Prompt ──────────────────────────
 
 _SYSTEM_PROMPT = """\
-你是一个意图分类路由器。你的任务是分析用户消息，判断意图类型并拆解子任务。
+你是一个智能请求路由器。你的任务是分析用户消息和上下文，决定如何处理这条请求。
 
-## 意图分类规则（7 类）
+## 执行模式（6 选 1，mode 字段）
 
-1. **TASK_GENERATION** — 用户要求写代码、写报告、生成内容、创作文本。
+1. **ignore** — 忽略或轻量回复。普通群聊闲聊、不需要处理的消息。
+   示例："哈哈哈"、"大家好"、"今天天气真好"、"收到"
+
+2. **qa** — 知识问答 / 检索。用户查询知识、问文档、问答类问题。
+   示例："公司年假政策是什么"、"RAG是什么意思"、"搜索关于LLM的论文"
+
+3. **plan** — 内容生成 / 复杂多步骤任务。用户要求写代码、写报告、生成内容。
    示例："帮我写一个快速排序算法"、"生成一份项目周报"、"写一篇关于AI的文章"
 
-2. **RETRIEVAL** — 用户查询知识、问文档、搜索已有信息、问答类问题。
-   示例："公司年假政策是什么"、"搜索关于LLM的论文"、"RAG是什么意思"
+4. **act** — 工具执行 / 文件处理。用户要求执行具体操作或处理文件。
+   示例："帮我算一下 123*456"、"查一下北京今天天气"、"帮我分析这个Excel文件"
 
-3. **TOOL_EXECUTION** — 用户要求执行特定操作：查天气、算数、调用外部API。
-   示例："查一下北京今天天气"、"帮我算一下 123 * 456"、"发送一封邮件给张三"
-
-4. **FILE_PROCESSING** — 用户上传、询问、处理文件相关内容。
-   示例："帮我分析这个Excel文件"、"这个PDF里说了什么"、"把这个CSV转成JSON"
-
-5. **ADMIN_COMMAND** — 管理员执行系统命令、控制虚拟机、运维操作。
+5. **delegate** — 委派给外部 Agent（如 OpenClaw）。需要管理员权限的运维操作。
    示例："重启测试服务器"、"查看系统日志"、"部署最新版本到生产环境"
 
-6. **GROUP_CHAT** — 普通群聊消息、闲聊、不需要Agent处理的内容。
-   示例："哈哈哈"、"今天天气真好"、"大家好"、"收到"
-
-7. **REFLECTION** — 用户追问、质疑之前的结果、要求重新考虑。
+6. **repair** — 反思修复。用户质疑或要求重新考虑之前的结果。
    示例："你刚才的回答不对"、"重新想想"、"能不能换个方案"、"为什么这样做"
+
+## 能力标签（capabilities，可多选）
+
+从以下标签中选择本次请求所需的能力：
+- retrieval：需要检索知识库
+- tool：需要调用工具（计算、API调用等）
+- file_ingest：需要处理上传的文件
+- openclaw：需要调用 OpenClaw 外部系统
+- memory_write：需要写入长期记忆
+
+## 约束字段
+
+- requires_admin：true/false，是否必须管理员才能执行（delegate 模式通常为 true）
+- private_only：true/false，是否只能在私聊中触发
+- allow_in_group：true/false，群聊中是否允许触发
 
 ## 子任务拆解规则
 
-当请求较复杂时，将其拆解为 2-4 个子任务。每个子任务包含：
+当 mode 为 qa/plan/act/delegate/repair 时，将请求拆解为 1-4 个子任务。每个子任务包含：
 - description: 子任务自然语言描述
-- required_agents: 需要调用的Agent类型（如 "llm_agent", "retrieval_agent", "tool_agent", "file_agent"）
+- required_agents: 需要调用的Agent类型列表（llm_agent / retrieval_agent / tool_agent / reflection_agent）
 - priority: 优先级（1最高）
-- depends_on: 依赖的子任务ID列表（用于DAG编排），如第二个子任务依赖第一个，则 depends_on=["subtask_1"]
+- depends_on: 依赖的子任务ID列表（用于DAG编排）
 
-**重要**：对于 tool_execution、task_generation、retrieval、file_processing、admin_command、reflection 意图，必须至少生成一个子任务。只有 group_chat 意图可以返回空列表。
+**重要**：mode=ignore 时 plan 为空列表；其他 mode 必须至少生成一个子任务。
 
 ## 用户上下文
 
@@ -88,10 +100,10 @@ _SYSTEM_PROMPT = """\
 - 是否私聊: {is_private}
 - 群聊ID: {group_id}
 
-请根据以上信息准确分类意图，给出置信度（0.0-1.0），并说明推理过程。"""
+请根据以上信息输出路由决策，给出置信度（0.0-1.0）并说明推理过程。"""
 
 
-# ── LLM 输出的内部 Schema（仅用于 tool_use） ──────────
+# ── LLM 输出的内部 Schema（仅用于 function calling） ──────────
 
 
 class _LLMSubTask(BaseModel):
@@ -109,22 +121,39 @@ class _LLMSubTask(BaseModel):
 
 
 class _LLMRoutingOutput(BaseModel):
-    """LLM 结构化输出的完整结果。"""
+    """LLM 结构化输出的完整路由决策。"""
 
-    intent: str = Field(
-        description=(
-            "意图类型，必须为以下之一: task_generation, retrieval, "
-            "tool_execution, file_processing, admin_command, group_chat, reflection"
-        ),
+    mode: str = Field(
+        description="执行模式，必须为以下之一: ignore, qa, plan, act, delegate, repair",
+    )
+    targets: list[str] = Field(
+        default_factory=list,
+        description="目标 flow 或 agent 名称列表（可为空）",
+    )
+    requires_admin: bool = Field(
+        default=False,
+        description="是否必须管理员才能执行，delegate 模式通常为 true",
+    )
+    private_only: bool = Field(
+        default=False,
+        description="是否只能在私聊中触发",
+    )
+    allow_in_group: bool = Field(
+        default=True,
+        description="群聊中是否允许触发",
+    )
+    capabilities: list[str] = Field(
+        default_factory=list,
+        description="所需能力标签：retrieval, tool, file_ingest, openclaw, memory_write",
     )
     confidence: float = Field(
         ge=0.0, le=1.0,
-        description="分类置信度，范围 [0.0, 1.0]",
+        description="路由决策置信度，范围 [0.0, 1.0]",
     )
-    reasoning: str = Field(description="对分类决策的解释说明")
-    sub_tasks: list[_LLMSubTask] = Field(
+    reasoning: str = Field(description="对路由决策的解释说明")
+    plan: list[_LLMSubTask] = Field(
         default_factory=list,
-        description="拆解出的子任务列表，简单请求可为空",
+        description="拆解出的子任务列表，mode=ignore 时为空列表",
     )
 
 
@@ -135,21 +164,24 @@ def _build_tool_schema() -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
-            "name": "classify_intent",
-            "description": "对用户消息进行意图分类，输出分类结果和子任务拆解。",
+            "name": "make_routing_decision",
+            "description": "对用户消息进行路由决策，输出执行模式和子任务计划。",
             "parameters": _LLMRoutingOutput.model_json_schema(),
         },
     }
 
 
-# ── 意图识别路由器 ───────────────────────────────────
+# ── 路由决策器 ───────────────────────────────────────
 
 
-class IntentRouter:
-    """意图识别路由器。
+class DecisionRouter:
+    """路由决策器。
 
     通过 OpenAI 兼容 API（智谱等）的 function calling 模式实现结构化输出，
-    将用户自然语言消息分类为 7 种意图之一，并拆解为子任务 DAG。
+    将用户请求路由到对应执行模式（mode），并拆解为子任务 DAG（plan）。
+
+    不做全局语义意图分类，只决策"下一步如何执行"。
+    权限校验由 Pipeline 的 Policy Gate 负责，不在本层执行。
 
     Args:
         settings: 配置对象；为 ``None`` 时使用全局单例。
@@ -158,8 +190,8 @@ class IntentRouter:
 
     Example::
 
-        router = IntentRouter()
-        result = await router.route("帮我写一个快速排序", user_context)
+        router = DecisionRouter()
+        decision = await router.route("帮我写一个快速排序", user_context)
     """
 
     def __init__(
@@ -182,22 +214,22 @@ class IntentRouter:
         self,
         raw_message: str,
         user_context: UserContext,
-    ) -> RoutingResult:
-        """对用户消息进行意图识别和子任务拆解。
+    ) -> RoutingDecision:
+        """对用户请求进行路由决策和子任务拆解。
 
         Args:
             raw_message: 原始消息文本。
             user_context: 用户上下文信息。
 
         Returns:
-            RoutingResult: 包含意图分类、置信度、推理说明和子任务列表。
+            RoutingDecision: 包含执行模式、能力标签、置信度和子任务计划。
         """
         log = logger.bind(
             user_id=user_context.user_id,
             channel=user_context.channel,
             message_preview=raw_message[:50],
         )
-        log.info("intent_router.route.start")
+        log.info("decision_router.route.start")
 
         # 1. 构造 prompt
         system_prompt = self._build_system_prompt(user_context)
@@ -207,21 +239,18 @@ class IntentRouter:
         try:
             result = await self._call_llm(system_prompt, messages)
         except Exception:
-            log.warning("intent_router.llm_failed", exc_info=True)
-            return self._fallback_result("LLM调用失败，降级为群聊处理")
+            log.warning("decision_router.llm_failed", exc_info=True)
+            return self._fallback_result("LLM调用失败，降级为忽略处理")
 
-        # 3. 权限过滤
-        result = self._apply_permission_filter(result, user_context)
-
-        # 4. 置信度规则
+        # 3. 置信度规则
         result = self._apply_confidence_rules(result)
 
         log.info(
-            "intent_router.route.done",
-            intent=result.intent.value,
+            "decision_router.route.done",
+            mode=result.mode.value,
             confidence=result.confidence,
             low_confidence=result.low_confidence,
-            sub_task_count=len(result.sub_tasks),
+            plan_count=len(result.plan),
         )
         return result
 
@@ -243,18 +272,18 @@ class IntentRouter:
         self,
         system_prompt: str,
         messages: list[dict[str, str]],
-    ) -> RoutingResult:
-        """调用 Anthropic Claude API 并解析结构化输出。
+    ) -> RoutingDecision:
+        """调用 LLM API 并解析结构化路由决策输出。
 
-        使用 tool_use + tool_choice 强制模型输出结构化 JSON，
-        然后解析为 RoutingResult。
+        使用 function calling + tool_choice 强制模型输出结构化 JSON，
+        然后解析为 RoutingDecision。
 
         Raises:
             Exception: LLM 调用失败或响应解析失败时抛出，
                        由 tenacity 重试或上层 route() 捕获降级。
         """
         log = logger.bind(model=self._model)
-        log.debug("intent_router.llm_call.start")
+        log.debug("decision_router.llm_call.start")
 
         response = await self._client.chat.completions.create(
             model=self._model,
@@ -264,7 +293,7 @@ class IntentRouter:
                 *messages,  # type: ignore[arg-type]
             ],
             tools=[self._tool_schema],  # type: ignore[list-item]
-            tool_choice={"type": "function", "function": {"name": "classify_intent"}},  # type: ignore[arg-type]
+            tool_choice={"type": "function", "function": {"name": "make_routing_decision"}},  # type: ignore[arg-type]
             timeout=httpx.Timeout(10.0),
         )
 
@@ -274,12 +303,12 @@ class IntentRouter:
         # 解析 LLM 原始输出
         llm_output = _LLMRoutingOutput.model_validate(tool_input)
 
-        # 转换为公共模型 RoutingResult
-        result = self._to_routing_result(llm_output)
+        # 转换为公共模型 RoutingDecision
+        result = self._to_routing_decision(llm_output)
 
         log.debug(
-            "intent_router.llm_call.done",
-            intent=result.intent.value,
+            "decision_router.llm_call.done",
+            mode=result.mode.value,
             confidence=result.confidence,
         )
         return result
@@ -296,13 +325,12 @@ class IntentRouter:
         return json.loads(message.tool_calls[0].function.arguments)
 
     @staticmethod
-    def _to_routing_result(llm_output: _LLMRoutingOutput) -> RoutingResult:
-        """将 LLM 内部输出转换为公共 RoutingResult 模型。"""
-        # 解析意图枚举
-        intent = IntentType(llm_output.intent)
+    def _to_routing_decision(llm_output: _LLMRoutingOutput) -> RoutingDecision:
+        """将 LLM 内部输出转换为公共 RoutingDecision 模型。"""
+        mode = ExecutionMode(llm_output.mode)
 
         # 转换子任务，由路由器统一编号 subtask_id
-        sub_tasks = [
+        plan = [
             SubTask(
                 subtask_id=f"subtask_{i + 1}",
                 description=st.description,
@@ -310,70 +338,53 @@ class IntentRouter:
                 priority=st.priority,
                 depends_on=st.depends_on,
             )
-            for i, st in enumerate(llm_output.sub_tasks)
+            for i, st in enumerate(llm_output.plan)
         ]
 
-        return RoutingResult(
-            intent=intent,
+        return RoutingDecision(
+            mode=mode,
+            targets=llm_output.targets,
+            requires_admin=llm_output.requires_admin,
+            private_only=llm_output.private_only,
+            allow_in_group=llm_output.allow_in_group,
+            capabilities=llm_output.capabilities,
             confidence=llm_output.confidence,
             reasoning=llm_output.reasoning,
-            sub_tasks=sub_tasks,
+            plan=plan,
         )
-
-    # ── 权限过滤 ────────────────────────────────────
-
-    @staticmethod
-    def _apply_permission_filter(
-        result: RoutingResult,
-        user_context: UserContext,
-    ) -> RoutingResult:
-        """检查 ADMIN_COMMAND 权限，非管理员降级为 RETRIEVAL。"""
-        if (
-            result.intent == IntentType.ADMIN_COMMAND
-            and user_context.role != UserRole.ADMIN
-        ):
-            logger.warning(
-                "intent_router.permission_denied",
-                user_id=user_context.user_id,
-                role=user_context.role.value,
-                original_intent=result.intent.value,
-            )
-            return result.model_copy(update={
-                "intent": IntentType.RETRIEVAL,
-                "reasoning": f"{result.reasoning} [权限不足，降级处理]",
-            })
-        return result
 
     # ── 置信度规则 ───────────────────────────────────
 
     @staticmethod
-    def _apply_confidence_rules(result: RoutingResult) -> RoutingResult:
+    def _apply_confidence_rules(result: RoutingDecision) -> RoutingDecision:
         """根据置信度阈值应用降级规则。
 
-        - confidence < 0.4 → 强制降级为 GROUP_CHAT
-        - confidence < 0.7 → 标记 low_confidence，清空 sub_tasks
+        - confidence < 0.4 → 强制降级为 ignore 模式
+        - confidence < 0.7 → 标记 low_confidence，清空 plan
         """
         updates: dict[str, Any] = {}
 
         if result.confidence < 0.4:
-            # 极低置信度：强制降级为群聊
+            # 极低置信度：强制降级为忽略
             logger.warning(
-                "intent_router.very_low_confidence",
+                "decision_router.very_low_confidence",
                 confidence=result.confidence,
-                original_intent=result.intent.value,
+                original_mode=result.mode.value,
             )
-            updates["intent"] = IntentType.GROUP_CHAT
-            updates["reasoning"] = f"{result.reasoning} [置信度过低，降级为群聊]"
+            updates["mode"] = ExecutionMode.IGNORE
+            updates["reasoning"] = (
+                f"{result.reasoning} [置信度过低 ({result.confidence:.2f})，降级为忽略]"
+            )
             updates["low_confidence"] = True
-            updates["sub_tasks"] = []
+            updates["plan"] = []
         elif result.confidence < 0.7:
-            # 低置信度：标记并清空子任务
+            # 低置信度：标记并清空计划
             logger.info(
-                "intent_router.low_confidence",
+                "decision_router.low_confidence",
                 confidence=result.confidence,
             )
             updates["low_confidence"] = True
-            updates["sub_tasks"] = []
+            updates["plan"] = []
 
         if updates:
             return result.model_copy(update=updates)
@@ -382,12 +393,18 @@ class IntentRouter:
     # ── 降级兜底 ────────────────────────────────────
 
     @staticmethod
-    def _fallback_result(reason: str) -> RoutingResult:
+    def _fallback_result(reason: str) -> RoutingDecision:
         """LLM 调用失败时的兜底结果。"""
-        return RoutingResult(
-            intent=IntentType.GROUP_CHAT,
+        return RoutingDecision(
+            mode=ExecutionMode.IGNORE,
             confidence=0.3,
             reasoning=reason,
-            sub_tasks=[],
+            plan=[],
             low_confidence=True,
         )
+
+
+# ── 向后兼容别名 ─────────────────────────────────────
+
+#: 过渡期别名，后续迭代移除。
+IntentRouter = DecisionRouter

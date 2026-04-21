@@ -10,9 +10,9 @@ import pytest
 from agent_hub.core import (
     AgentResult,
     BaseAgent,
-    IntentType,
+    ExecutionMode,
     MemoryEntry,
-    RoutingResult,
+    RoutingDecision,
     SubTask,
     TaskInput,
     TaskOutput,
@@ -26,17 +26,16 @@ from agent_hub.core import (
 
 
 class TestEnums:
-    def test_intent_type_values(self) -> None:
-        assert IntentType.TASK_GENERATION == "task_generation"
-        assert IntentType.RETRIEVAL == "retrieval"
-        assert IntentType.TOOL_EXECUTION == "tool_execution"
-        assert IntentType.FILE_PROCESSING == "file_processing"
-        assert IntentType.ADMIN_COMMAND == "admin_command"
-        assert IntentType.GROUP_CHAT == "group_chat"
-        assert IntentType.REFLECTION == "reflection"
+    def test_execution_mode_values(self) -> None:
+        assert ExecutionMode.IGNORE == "ignore"
+        assert ExecutionMode.QA == "qa"
+        assert ExecutionMode.PLAN == "plan"
+        assert ExecutionMode.ACT == "act"
+        assert ExecutionMode.DELEGATE == "delegate"
+        assert ExecutionMode.REPAIR == "repair"
 
-    def test_intent_type_count(self) -> None:
-        assert len(IntentType) == 7
+    def test_execution_mode_count(self) -> None:
+        assert len(ExecutionMode) == 6
 
     def test_user_role_values(self) -> None:
         assert UserRole.ADMIN == "admin"
@@ -106,7 +105,7 @@ class TestTaskInput:
         assert restored.raw_message == task.raw_message
 
 
-# ── SubTask & RoutingResult 测试 ─────────────────────
+# ── SubTask & RoutingDecision 测试 ─────────────────────
 
 
 class TestSubTask:
@@ -120,32 +119,54 @@ class TestSubTask:
         assert st.depends_on == []
 
 
-class TestRoutingResult:
+class TestRoutingDecision:
     def test_valid(self) -> None:
-        rr = RoutingResult(
-            intent=IntentType.RETRIEVAL,
+        rd = RoutingDecision(
+            mode=ExecutionMode.QA,
             confidence=0.92,
             reasoning="用户请求查找资料",
         )
-        assert rr.low_confidence is False
-        assert rr.sub_tasks == []
+        assert rd.low_confidence is False
+        assert rd.plan == []
+        assert rd.requires_admin is False
+        assert rd.allow_in_group is True
 
     def test_low_confidence_flag(self) -> None:
-        rr = RoutingResult(
-            intent=IntentType.TASK_GENERATION,
+        rd = RoutingDecision(
+            mode=ExecutionMode.PLAN,
             confidence=0.55,
             reasoning="不确定意图",
             low_confidence=True,
         )
-        assert rr.low_confidence is True
+        assert rd.low_confidence is True
 
     def test_confidence_range_validation(self) -> None:
         with pytest.raises(ValueError):
-            RoutingResult(
-                intent=IntentType.RETRIEVAL,
+            RoutingDecision(
+                mode=ExecutionMode.QA,
                 confidence=1.5,
                 reasoning="超范围",
             )
+
+    def test_requires_admin_field(self) -> None:
+        rd = RoutingDecision(
+            mode=ExecutionMode.DELEGATE,
+            confidence=0.9,
+            reasoning="运维操作",
+            requires_admin=True,
+        )
+        assert rd.requires_admin is True
+
+    def test_capabilities_and_targets(self) -> None:
+        rd = RoutingDecision(
+            mode=ExecutionMode.ACT,
+            confidence=0.85,
+            reasoning="需要工具",
+            capabilities=["tool", "retrieval"],
+            targets=["tool_agent"],
+        )
+        assert "tool" in rd.capabilities
+        assert "tool_agent" in rd.targets
 
 
 # ── ToolSpec 测试 ─────────────────────────────────────

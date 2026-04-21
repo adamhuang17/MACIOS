@@ -349,6 +349,8 @@ class LLMAgent(BaseAgent):
     def _parse_react_output(text: str) -> dict[str, Any] | None:
         """解析 LLM 的 ReAct 格式输出。
 
+        兼容中英文关键字、全半角冒号等变体格式。
+
         Returns:
             成功时返回包含 thought / action / action_input 或
             thought / final_answer 的字典；解析失败返回 None。
@@ -356,31 +358,49 @@ class LLMAgent(BaseAgent):
         if not text or not text.strip():
             return None
 
-        # 尝试提取 Thought
+        # 兼容中英文、全半角冒号
+        _SEP = r"[\s:：]+"
+
+        # 尝试提取 Thought（兼容 "思考" / "Thought"）
         thought_match = re.search(
-            r"Thought:\s*(.+?)(?=\n(?:Action:|Final Answer:)|$)",
+            rf"(?:Thought|思考){_SEP}(.+?)(?=\n(?:Action|操作|Final Answer|最终答案|FinalAnswer)[\s:：]|$)",
             text,
-            re.DOTALL,
+            re.DOTALL | re.IGNORECASE,
         )
         if not thought_match:
-            return None
+            # 宽容模式：把整段非 Action/Final 文本当作 thought
+            thought_match = re.search(r"^(.+?)(?=\n(?:Action|Final)[\s:：]|$)", text.strip(), re.DOTALL | re.IGNORECASE)
+            if not thought_match:
+                return None
         thought = thought_match.group(1).strip()
 
-        # 检查 Final Answer
-        final_match = re.search(r"Final Answer:\s*(.+)", text, re.DOTALL)
+        # 检查 Final Answer（兼容 "最终答案" / "Final Answer" / "FinalAnswer"）
+        final_match = re.search(
+            rf"(?:Final\s*Answer|最终答案|FinalAnswer){_SEP}(.+)",
+            text,
+            re.DOTALL | re.IGNORECASE,
+        )
         if final_match:
             return {
                 "thought": thought,
                 "final_answer": final_match.group(1).strip(),
             }
 
-        # 检查 Action + Action Input
-        action_match = re.search(r"Action:\s*(.+?)(?:\n|$)", text)
+        # 检查 Action + Action Input（兼容 "操作" / "Action"）
+        action_match = re.search(
+            rf"(?:Action|操作){_SEP}(.+?)(?:\n|$)",
+            text,
+            re.IGNORECASE,
+        )
         if not action_match:
             return None
         action = action_match.group(1).strip()
 
-        input_match = re.search(r"Action Input:\s*(.+?)(?:\n|$)", text, re.DOTALL)
+        input_match = re.search(
+            rf"(?:Action\s*Input|操作输入|ActionInput|参数){_SEP}(.+?)(?:\n|$)",
+            text,
+            re.DOTALL | re.IGNORECASE,
+        )
         action_input = input_match.group(1).strip() if input_match else ""
 
         return {
