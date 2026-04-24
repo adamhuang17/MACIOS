@@ -8,12 +8,11 @@
     python scripts/demo_live.py
 """
 
-from __future__ import annotations
-
-import asyncio
-import io
-import sys
-from pathlib import Path
+from __future__ import annotations  # 启用延迟注解求值，允许在类型提示中用
+import asyncio  # 异步 I/O 框架，提供 async/await 事件循环
+import io  
+import sys  
+from pathlib import Path  
 
 # Windows 终端编码修正
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -22,13 +21,9 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="repla
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from agent_hub.config.settings import get_settings
-from agent_hub.core.enums import ExecutionMode, UserRole
+from agent_hub.core.enums import UserRole
 from agent_hub.core.models import (
-    AgentResult,
-    MemoryEntry,
-    RoutingDecision,
     SubTask,
-    TaskInput,
     UserContext,
 )
 from agent_hub.core.router import DecisionRouter
@@ -141,28 +136,27 @@ async def demo_memory(memory: MemoryManager) -> None:
     separator("[5/6] 记忆系统 Session + Persistent")
     print("展示: 写入记忆 -> 读取上下文\n")
 
-    entry = MemoryEntry(
-        user_id="demo-user",
+    memory.add(
         session_id="demo-sess",
-        role="user",
+        user_id="demo-user",
         content="帮我写一个冒泡排序",
     )
-    memory.add(entry, long_term=False)
     print("  [写入] 短期记忆: '帮我写一个冒泡排序'")
 
-    entry2 = MemoryEntry(
-        user_id="demo-user",
+    memory.add(
         session_id="demo-sess",
-        role="assistant",
+        user_id="demo-user",
         content="这是冒泡排序的 Python 实现...",
     )
-    memory.add(entry2, long_term=False)
     print("  [写入] 短期记忆: '这是冒泡排序的 Python 实现...'")
 
     context = memory.get_context("demo-sess", "demo-user")
-    print(f"\n  [读取] 上下文条数: {len(context)}")
-    for c in context:
-        print(f"    [{c.role}] {c.content[:50]}...")
+    print(f"\n  [读取] 上下文:\n{context}")
+
+    recent = memory.get_recent("demo-sess", n=5)
+    print(f"\n  [最近 {len(recent)} 条]:")
+    for r in recent:
+        print(f"    [{r.memory_type}] {r.content[:50]}...")
 
 
 async def demo_guard() -> None:

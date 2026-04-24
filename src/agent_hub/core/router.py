@@ -47,82 +47,56 @@ logger = structlog.get_logger(__name__)
 
 _SYSTEM_PROMPT = """\
 你是一个智能请求路由器。你的任务是分析用户消息和上下文，决定如何处理这条请求。
-
 ## 执行模式（6 选 1，mode 字段）
-
 1. **ignore** — 忽略或轻量回复。普通群聊闲聊、不需要处理的消息。
    示例："哈哈哈"、"大家好"、"今天天气真好"、"收到"
-
 2. **qa** — 知识问答 / 检索。用户查询知识、问文档、问答类问题。
    示例："公司年假政策是什么"、"RAG是什么意思"、"搜索关于LLM的论文"
-
 3. **plan** — 内容生成 / 复杂多步骤任务。用户要求写代码、写报告、生成内容。
    示例："帮我写一个快速排序算法"、"生成一份项目周报"、"写一篇关于AI的文章"
-
 4. **act** — 工具执行 / 文件处理。用户要求执行具体操作或处理文件。
    示例："帮我算一下 123*456"、"查一下北京今天天气"、"帮我分析这个Excel文件"
-
 5. **delegate** — 委派给外部 Agent（如 OpenClaw）。需要管理员权限的运维操作。
    示例："重启测试服务器"、"查看系统日志"、"部署最新版本到生产环境"
-
 6. **repair** — 反思修复。用户质疑或要求重新考虑之前的结果。
    示例："你刚才的回答不对"、"重新想想"、"能不能换个方案"、"为什么这样做"
-
 ## 能力标签（capabilities，可多选）
-
 从以下标签中选择本次请求所需的能力：
 - retrieval：需要检索知识库
 - tool：需要调用工具（计算、API调用等）
 - file_ingest：需要处理上传的文件
 - openclaw：需要调用 OpenClaw 外部系统
 - memory_write：需要写入长期记忆
-
 ## 约束字段
-
 - requires_admin：true/false，是否必须管理员才能执行（delegate 模式通常为 true）
 - private_only：true/false，是否只能在私聊中触发
 - allow_in_group：true/false，群聊中是否允许触发
-
 ## 子任务拆解规则
-
 当 mode 为 qa/plan/act/delegate/repair 时，将请求拆解为 1-4 个子任务。每个子任务包含：
 - description: 子任务自然语言描述
 - required_agents: 需要调用的Agent类型列表（llm_agent / retrieval_agent / tool_agent / reflection_agent）
 - priority: 优先级（1最高）
 - depends_on: 依赖的子任务ID列表（用于DAG编排）
-
 **重要**：mode=ignore 时 plan 为空列表；其他 mode 必须至少生成一个子任务。
-
 ## 用户上下文
-
 - 用户角色: {role}
 - 消息渠道: {channel}
 - 是否私聊: {is_private}
 - 群聊ID: {group_id}
-
 请根据以上信息输出路由决策，给出置信度（0.0-1.0）并说明推理过程。"""
-
 
 # ── LLM 输出的内部 Schema（仅用于 function calling） ──────────
 
-
 class _LLMSubTask(BaseModel):
     """LLM 输出的子任务结构。"""
-
     description: str = Field(description="子任务自然语言描述")
-    required_agents: list[str] = Field(
-        description='需要调用的Agent类型名称列表，如 ["llm_agent", "retrieval_agent"]',
-    )
+    required_agents: list[str] = Field(description='需要调用的Agent类型名称列表，如 ["llm_agent", "retrieval_agent"]')
     priority: int = Field(default=1, description="优先级，1为最高")
-    depends_on: list[str] = Field(
-        default_factory=list,
-        description='依赖的子任务ID列表，如 ["subtask_1"]',
-    )
+    depends_on: list[str] = Field(default_factory=list,description='依赖的子任务ID列表，如 ["subtask_1"]')
 
 
 class _LLMRoutingOutput(BaseModel):
     """LLM 结构化输出的完整路由决策。"""
-
     mode: str = Field(
         description="执行模式，必须为以下之一: ignore, qa, plan, act, delegate, repair",
     )
