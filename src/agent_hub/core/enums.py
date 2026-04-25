@@ -1,9 +1,9 @@
 """执行模式、节点类型、渠道类型、用户角色等枚举定义。"""
 
-from enum import Enum
+from enum import StrEnum
 
 
-class ExecutionMode(str, Enum):
+class ExecutionMode(StrEnum):
     """路由决策执行模式（Layer 2 输出）。
 
     代表"下一步如何处理"，而非用户语义意图分类。
@@ -18,7 +18,7 @@ class ExecutionMode(str, Enum):
     REPAIR = "repair"       # 反思 / 修复（用户质疑之前结果）
 
 
-class NodeType(str, Enum):
+class NodeType(StrEnum):
     """工作流节点类型（基础设施节点，对标 Dify BlockEnum）。
 
     稳定的能力类型枚举，不是用户语义 intent taxonomy。
@@ -34,7 +34,7 @@ class NodeType(str, Enum):
     LOOP = "loop"                                    # 循环节点
 
 
-class ChannelType(str, Enum):
+class ChannelType(StrEnum):
     """消息来源渠道类型。
 
     Layer 1 Policy Gate 中的事实字段之一。
@@ -47,7 +47,7 @@ class ChannelType(str, Enum):
     WEBHOOK = "webhook"     # Webhook 回调
 
 
-class UserRole(str, Enum):
+class UserRole(StrEnum):
     """用户角色。
 
     ADMIN 拥有单独开会话操控远端 OpenClaw 的权限；

@@ -7,12 +7,12 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import operator
 import subprocess
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 import structlog
 
@@ -154,12 +154,14 @@ def _safe_eval_expr(expr: str) -> float | int:
         if not isinstance(node, _ALLOWED_AST_NODES):
             raise ValueError(f"不允许的表达式节点: {type(node).__name__}")
         # 额外校验 Pow 的右操作数不能过大，防止 DoS
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
-            if isinstance(node.right, ast.Constant) and isinstance(
-                node.right.value, (int, float)
-            ):
-                if abs(node.right.value) > 1000:
-                    raise ValueError("幂指数过大，最大允许 1000")
+        if (
+            isinstance(node, ast.BinOp)
+            and isinstance(node.op, ast.Pow)
+            and isinstance(node.right, ast.Constant)
+            and isinstance(node.right.value, int | float)
+            and abs(node.right.value) > 1000
+        ):
+            raise ValueError("幂指数过大，最大允许 1000")
     code = compile(tree, "<expr>", "eval")
     return eval(code, {"__builtins__": {}})  # noqa: S307
 
@@ -247,7 +249,7 @@ async def system_command_impl(params: dict[str, Any]) -> str:
 
 async def get_current_time_impl(params: dict[str, Any]) -> str:
     """获取当前时间。"""
-    now = datetime.now(tz=timezone.utc).astimezone()
+    now = datetime.now(tz=UTC).astimezone()
     return f"当前时间：{now:%Y-%m-%d %H:%M:%S %Z}"
 
 

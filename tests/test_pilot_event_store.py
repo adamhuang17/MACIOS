@@ -5,7 +5,7 @@ InMemory 与 SQLite 共享同一组测试，行为不得分叉。
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import pytest
 import pytest_asyncio
@@ -21,7 +21,6 @@ from agent_hub.pilot import (
     Workspace,
     transition,
 )
-
 
 # ── 参数化两种实现 ───────────────────────────────────
 

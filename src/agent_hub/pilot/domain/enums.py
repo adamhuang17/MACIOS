@@ -6,19 +6,18 @@
 
 from __future__ import annotations
 
-from enum import Enum
-
+from enum import StrEnum
 
 # ── 实体状态 ─────────────────────────────────────────
 
 
-class WorkspaceStatus(str, Enum):
+class WorkspaceStatus(StrEnum):
     ACTIVE = "active"
     ARCHIVED = "archived"
     FAILED = "failed"
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     CREATED = "created"
     PLANNING = "planning"
     AWAITING_APPROVAL = "awaiting_approval"
@@ -32,7 +31,7 @@ class TaskStatus(str, Enum):
     ARCHIVED = "archived"
 
 
-class PlanStatus(str, Enum):
+class PlanStatus(StrEnum):
     DRAFT = "draft"
     APPROVAL_REQUESTED = "approval_requested"
     APPROVED = "approved"
@@ -40,7 +39,7 @@ class PlanStatus(str, Enum):
     SUPERSEDED = "superseded"
 
 
-class PlanStepStatus(str, Enum):
+class PlanStepStatus(StrEnum):
     PENDING = "pending"
     DRY_RUNNING = "dry_running"
     WAITING_APPROVAL = "waiting_approval"
@@ -53,7 +52,7 @@ class PlanStepStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class ApprovalStatus(str, Enum):
+class ApprovalStatus(StrEnum):
     REQUESTED = "requested"
     APPROVED = "approved"
     REJECTED = "rejected"
@@ -63,7 +62,7 @@ class ApprovalStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class ArtifactStatus(str, Enum):
+class ArtifactStatus(StrEnum):
     DRAFT = "draft"
     GENERATED = "generated"
     UPLOADED = "uploaded"
@@ -76,13 +75,13 @@ class ArtifactStatus(str, Enum):
 # ── 动作 ─────────────────────────────────────────────
 
 
-class WorkspaceAction(str, Enum):
+class WorkspaceAction(StrEnum):
     ARCHIVE = "archive"
     FAIL = "fail"
     REACTIVATE = "reactivate"
 
 
-class TaskAction(str, Enum):
+class TaskAction(StrEnum):
     START_PLANNING = "start_planning"
     REQUEST_APPROVAL = "request_approval"
     APPROVE = "approve"
@@ -97,14 +96,14 @@ class TaskAction(str, Enum):
     ARCHIVE = "archive"
 
 
-class PlanAction(str, Enum):
+class PlanAction(StrEnum):
     REQUEST_APPROVAL = "request_approval"
     APPROVE = "approve"
     REJECT = "reject"
     SUPERSEDE = "supersede"
 
 
-class PlanStepAction(str, Enum):
+class PlanStepAction(StrEnum):
     START_DRY_RUN = "start_dry_run"
     REQUEST_APPROVAL = "request_approval"
     APPROVE = "approve"
@@ -117,7 +116,7 @@ class PlanStepAction(str, Enum):
     CANCEL = "cancel"
 
 
-class ApprovalAction(str, Enum):
+class ApprovalAction(StrEnum):
     APPROVE = "approve"
     REJECT = "reject"
     EXPIRE = "expire"
@@ -126,7 +125,7 @@ class ApprovalAction(str, Enum):
     CANCEL = "cancel"
 
 
-class ArtifactAction(str, Enum):
+class ArtifactAction(StrEnum):
     GENERATE = "generate"
     UPLOAD = "upload"
     SHARE = "share"
@@ -138,20 +137,20 @@ class ArtifactAction(str, Enum):
 # ── 事件 / 审计 ──────────────────────────────────────
 
 
-class EventLevel(str, Enum):
+class EventLevel(StrEnum):
     INFO = "info"
     WARN = "warn"
     ERROR = "error"
 
 
-class ActorType(str, Enum):
+class ActorType(StrEnum):
     USER = "user"
     AGENT = "agent"
     SYSTEM = "system"
     SKILL = "skill"
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     WORKSPACE_CREATED = "workspace.created"
     WORKSPACE_STATUS_CHANGED = "workspace.status_changed"
     TASK_CREATED = "task.created"
@@ -174,21 +173,21 @@ class EventType(str, Enum):
 # ── 风险 / 类型 ──────────────────────────────────────
 
 
-class RiskLevel(str, Enum):
+class RiskLevel(StrEnum):
     READ = "read"
     WRITE = "write"
     SHARE = "share"
     ADMIN = "admin"
 
 
-class ApprovalTargetType(str, Enum):
+class ApprovalTargetType(StrEnum):
     PLAN = "plan"
     STEP = "step"
     SHARE = "share"
     WRITE = "write"
 
 
-class PlanStepKind(str, Enum):
+class PlanStepKind(StrEnum):
     READ_CONTEXT = "read_context"
     GENERATE_DOC = "generate_doc"
     GENERATE_SLIDE_SPEC = "generate_slide_spec"
@@ -199,7 +198,7 @@ class PlanStepKind(str, Enum):
     MANUAL = "manual"
 
 
-class ArtifactType(str, Enum):
+class ArtifactType(StrEnum):
     CONTEXT_BUNDLE = "context_bundle"
     PROJECT_BRIEF_MD = "project_brief_md"
     SLIDE_SPEC_JSON = "slide_spec_json"

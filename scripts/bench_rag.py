@@ -86,7 +86,7 @@ async def run_3_task_scenario() -> None:
 
     # DAG 分层验证
     layers = _topological_layers(sub_tasks)
-    print(f"  DAG 分层结果:")
+    print("  DAG 分层结果:")
     for i, layer in enumerate(layers):
         ids = [st.subtask_id for st in layer]
         print(f"    Layer {i}: {ids}")

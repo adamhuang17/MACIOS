@@ -18,16 +18,28 @@ from __future__ import annotations
 import time
 import uuid
 from contextvars import ContextVar
-from typing import Any, Optional
+from types import TracebackType
+from typing import Protocol
 
 import structlog
 
 logger = structlog.get_logger(__name__)
 
+
+class _OTelSpan(Protocol):
+    def set_status(self, status_code: object, description: str | None = None) -> None: ...
+    def record_exception(self, exception: BaseException) -> None: ...
+    def end(self) -> None: ...
+    def add_event(self, name: str, attributes: dict[str, object]) -> None: ...
+
+
+class _OTelTracer(Protocol):
+    def start_span(self, name: str) -> _OTelSpan: ...
+
 # ── OpenTelemetry 可选加载 ────────────────────────────
 
 _HAS_OTEL = False
-_otel_tracer: Any = None
+_otel_tracer: _OTelTracer | None = None
 
 try:
     from opentelemetry import trace as otel_trace
@@ -46,7 +58,7 @@ except ImportError:  # pragma: no cover — OTel 不是硬依赖
 _current_trace_id: ContextVar[str] = ContextVar("trace_id", default="")
 
 
-def init_tracer(service_name: str = "agent-hub") -> Any:
+def init_tracer(service_name: str = "agent-hub") -> _OTelTracer | None:
     """初始化全局追踪器。
 
     优先使用 OTLP exporter（Jaeger/Zipkin），不可用时降级为
@@ -95,7 +107,7 @@ def init_tracer(service_name: str = "agent-hub") -> Any:
     return None
 
 
-def get_tracer() -> Any:
+def get_tracer() -> _OTelTracer | None:
     """获取全局 OTel Tracer（未初始化时自动调用 ``init_tracer``）。"""
     if _otel_tracer is None and _HAS_OTEL:
         init_tracer()
@@ -134,13 +146,13 @@ class SpanContext:
         print(span.duration_ms)
     """
 
-    def __init__(self, name: str, trace_id: Optional[str] = None) -> None:
+    def __init__(self, name: str, trace_id: str | None = None) -> None:
         self.name = name
         self.trace_id = trace_id or str(uuid.uuid4())
         self.start_time: float = 0.0
         self.end_time: float = 0.0
-        self.events: list[dict[str, Any]] = []
-        self._otel_span: Any = None
+        self.events: list[dict[str, object]] = []
+        self._otel_span: _OTelSpan | None = None
 
     @property
     def duration_ms(self) -> int:
@@ -164,7 +176,7 @@ class SpanContext:
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
-        exc_tb: Any,
+        exc_tb: TracebackType | None,
     ) -> bool:
         self.end_time = time.monotonic()
         status = "ok" if exc_type is None else "error"
@@ -191,7 +203,7 @@ class SpanContext:
 
     # ── 事件 & 序列化 ────────────────────────────────
 
-    def add_event(self, name: str, attributes: dict[str, Any] | None = None) -> None:
+    def add_event(self, name: str, attributes: dict[str, object] | None = None) -> None:
         """在 Span 内添加事件。
 
         Args:
@@ -208,7 +220,7 @@ class SpanContext:
         if self._otel_span is not None:
             self._otel_span.add_event(name, attributes=attributes or {})
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
         """导出为字典（JSON Lines 兼容）。
 
         Returns:

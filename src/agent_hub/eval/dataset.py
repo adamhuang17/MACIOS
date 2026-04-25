@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,7 +34,7 @@ class EvalDataset:
     def __len__(self) -> int:
         return len(self.pairs)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[QAPair]:
         return iter(self.pairs)
 
     @classmethod

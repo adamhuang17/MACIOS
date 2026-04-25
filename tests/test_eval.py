@@ -8,13 +8,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from agent_hub.eval.dataset import EvalDataset, QAPair
 from agent_hub.eval.evaluator import AggregateResult, EvalResult, RAGEvaluator
 from agent_hub.eval.reporter import EvalReporter
 from agent_hub.rag.vector_store import SearchResult
-
 
 # ═══════════════════════════════════════════════════════
 # Dataset 测试

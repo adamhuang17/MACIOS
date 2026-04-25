@@ -5,8 +5,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Iterable, Optional, Union
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 from agent_hub.pilot.domain.enums import (
     ApprovalAction,
@@ -32,20 +33,19 @@ from agent_hub.pilot.domain.models import (
     Workspace,
 )
 
-
-Entity = Union[Workspace, Task, Plan, PlanStep, Approval, Artifact]
-Action = Union[
-    WorkspaceAction,
-    TaskAction,
-    PlanAction,
-    PlanStepAction,
-    ApprovalAction,
-    ArtifactAction,
-]
+Entity = Workspace | Task | Plan | PlanStep | Approval | Artifact
+Action = (
+    WorkspaceAction
+    | TaskAction
+    | PlanAction
+    | PlanStepAction
+    | ApprovalAction
+    | ArtifactAction
+)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ── 状态迁移表 ───────────────────────────────────────
@@ -169,8 +169,8 @@ def transition(
     obj: Entity,
     action: Action,
     *,
-    now: Optional[datetime] = None,
-    patch: Optional[dict[str, Any]] = None,
+    now: datetime | None = None,
+    patch: dict[str, Any] | None = None,
 ) -> Entity:
     """对实体执行一次状态迁移，返回新对象。
 

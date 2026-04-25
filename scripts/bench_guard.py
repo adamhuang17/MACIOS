@@ -24,7 +24,6 @@ if str(_SRC) not in sys.path:
 
 from agent_hub.security.guard import RuleBasedGuard
 
-
 # ── 对抗样本数据集 ──────────────────────────────────────
 # 格式: (文本, 是否为注入攻击, 类别)
 
@@ -180,7 +179,7 @@ def bench_guard_accuracy() -> None:
     print(f"  攻击样本: {total_attacks} 条 | 正常样本: {total_normals} 条")
     print(f"  TP(正确拦截): {tp} | FN(漏放): {fn}")
     print(f"  TN(正确放行): {tn} | FP(误杀): {fp}")
-    print(f"  ────────────────────────────")
+    print("  ────────────────────────────")
     print(f"  拦截率(Recall):  {recall:.1%} ({tp}/{total_attacks})")
     print(f"  误杀率(FPR):     {fpr:.1%} ({fp}/{total_normals})")
     print(f"  准确率(Accuracy): {accuracy:.1%}")
@@ -188,21 +187,21 @@ def bench_guard_accuracy() -> None:
 
     # 打印漏放样本
     if fn > 0:
-        print(f"\n  ⚠ 漏放样本:")
+        print("\n  ⚠ 漏放样本:")
         for text, blocked in attack_details:
             if not blocked:
                 print(f"    - {text}")
 
     # 打印误杀样本
     if fp > 0:
-        print(f"\n  ⚠ 误杀样本:")
+        print("\n  ⚠ 误杀样本:")
         for text, blocked in normal_details:
             if blocked:
                 print(f"    - {text}")
 
     # 统计规则覆盖类别
-    print(f"\n  规则数量: 21 条")
-    print(f"  覆盖类别: 7 大类（角色劫持/Prompt泄露/越权/分隔符注入/编码绕过/输出操控/社工攻击）")
+    print("\n  规则数量: 21 条")
+    print("  覆盖类别: 7 大类（角色劫持/Prompt泄露/越权/分隔符注入/编码绕过/输出操控/社工攻击）")
 
 
 if __name__ == "__main__":

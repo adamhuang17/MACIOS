@@ -1,8 +1,9 @@
 import asyncio
+
 from agent_hub.config.settings import get_settings
-from agent_hub.core.pipeline import AgentPipeline
-from agent_hub.core.models import TaskInput, UserContext
 from agent_hub.core.enums import UserRole
+from agent_hub.core.models import TaskInput, UserContext
+from agent_hub.core.pipeline import AgentPipeline
 
 settings = get_settings()
 pipeline = AgentPipeline(settings)

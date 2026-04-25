@@ -24,11 +24,18 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import defaultdict
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
 import structlog
 
-from agent_hub.agents import LLMAgent, ReflectionAgent, RetrievalAgent, ToolAgent, ToolRegistry
+from agent_hub.agents import (
+    LLMAgent,
+    ReflectionAgent,
+    RetrievalAgent,
+    ToolAgent,
+    ToolRegistry,
+)
 from agent_hub.core.enums import ExecutionMode, UserRole
 from agent_hub.core.models import (
     AgentResult,
@@ -164,7 +171,10 @@ class AgentPipeline:
 
     # ── 流式入口 ─────────────────────────────────────
 
-    async def run_stream(self, task_input: TaskInput):
+    async def run_stream(
+        self,
+        task_input: TaskInput,
+    ) -> AsyncGenerator[dict[str, str], None]:
         """Pipeline 流式入口：路由 → Agent → 逐 token yield。
 
         与 ``run()`` 流程一致，但在 Agent 执行阶段逐步推送。
@@ -176,9 +186,6 @@ class AgentPipeline:
         Yields:
             dict: ``{"type": "status"|"token"|"done", "content": "..."}``
         """
-        from agent_hub.core.tracer import SpanContext, get_current_trace_id
-
-        trace_id = task_input.trace_id or get_current_trace_id()
         user_ctx = task_input.user_context
         session_id = user_ctx.session_id or user_ctx.user_id
 

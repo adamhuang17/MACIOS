@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from agent_hub.core.enums import ExecutionMode, UserRole
-
 
 # ── 用户上下文 ────────────────────────────────────────
 
@@ -33,8 +32,8 @@ class UserContext(BaseModel):
     user_id: str
     role: UserRole
     channel: str
-    session_id: Optional[str] = None
-    group_id: Optional[str] = None
+    session_id: str | None = None
+    group_id: str | None = None
     is_private: bool = False
 
 
@@ -61,7 +60,7 @@ class TaskInput(BaseModel):
     raw_message: str
     attachments: list[str] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=datetime.now)
-    parent_trace_id: Optional[str] = None
+    parent_trace_id: str | None = None
 
     # ── Layer 1: Policy Gate 输入事实字段（由通道侧组装，可选）──
     has_files: bool = False
@@ -145,9 +144,9 @@ class ReActStep(BaseModel):
     """
 
     thought: str
-    action: Optional[str] = None
-    action_input: Optional[str] = None
-    observation: Optional[str] = None
+    action: str | None = None
+    action_input: str | None = None
+    observation: str | None = None
 
 
 class ReActTrace(BaseModel):
@@ -160,7 +159,7 @@ class ReActTrace(BaseModel):
     """
 
     steps: list[ReActStep] = Field(default_factory=list)
-    final_answer: Optional[str] = None
+    final_answer: str | None = None
     total_rounds: int = 0
 
 
@@ -181,7 +180,7 @@ class GuardResult(BaseModel):
     is_safe: bool
     risk_level: str = "safe"
     matched_rules: list[str] = Field(default_factory=list)
-    llm_analysis: Optional[str] = None
+    llm_analysis: str | None = None
     confidence: float = 1.0
 
 
@@ -221,11 +220,11 @@ class AgentResult(BaseModel):
 
     agent_name: str
     success: bool
-    output: Optional[Any] = None
-    error: Optional[str] = None
+    output: Any | None = None
+    error: str | None = None
     duration_ms: int
     trace_id: str
-    react_trace: Optional["ReActTrace"] = None
+    react_trace: ReActTrace | None = None
 
 
 # ── 记忆条目 ─────────────────────────────────────────
@@ -249,12 +248,12 @@ class MemoryEntry(BaseModel):
     memory_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     content: str
     memory_type: str
-    session_id: Optional[str] = None
+    session_id: str | None = None
     tags: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.now)
     ttl: int = -1
     is_deleted: bool = False
-    embedding: Optional[list[float]] = Field(default=None, exclude=True)
+    embedding: list[float] | None = Field(default=None, exclude=True)
 
 
 # ── 最终输出 ─────────────────────────────────────────

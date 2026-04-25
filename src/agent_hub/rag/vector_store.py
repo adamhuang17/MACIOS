@@ -7,10 +7,12 @@ HNSW 索引，按 user_id / namespace 分区，CRUD 操作。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    from psycopg_pool import AsyncConnectionPool
 
 logger = structlog.get_logger(__name__)
 
@@ -47,13 +49,15 @@ class VectorStore:
     def __init__(self, pg_dsn: str, dimension: int = 1024) -> None:
         self._pg_dsn = pg_dsn
         self._dimension = dimension
-        self._pool: Any = None
+        self._pool: AsyncConnectionPool | None = None
 
-    async def _get_pool(self) -> Any:
+    async def _get_pool(self) -> AsyncConnectionPool:
         """获取或创建连接池。"""
         if self._pool is not None:
             return self._pool
+
         import psycopg_pool
+
         self._pool = psycopg_pool.AsyncConnectionPool(
             self._pg_dsn,
             min_size=2,
@@ -119,7 +123,7 @@ class VectorStore:
         import json
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
-                for chunk, emb in zip(chunks, embeddings):
+                for chunk, emb in zip(chunks, embeddings, strict=False):
                     await cur.execute(
                         f"""
                         INSERT INTO {self.TABLE_NAME}
@@ -174,10 +178,9 @@ class VectorStore:
         params.append(str(query_embedding))
         params.append(top_k)
 
-        async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    f"""
+        async with pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute(
+                f"""
                     SELECT id, content, metadata,
                            1 - (embedding <=> %s::vector) AS score
                     FROM {self.TABLE_NAME}
@@ -185,9 +188,9 @@ class VectorStore:
                     ORDER BY embedding <=> %s::vector
                     LIMIT %s
                     """,
-                    (*params[:-2], params[-2], params[-2], params[-1]),
-                )
-                rows = await cur.fetchall()
+                (*params[:-2], params[-2], params[-2], params[-1]),
+            )
+            rows = await cur.fetchall()
 
         # 修正参数顺序：WHERE 子句参数 + 两次 embedding 参数 + limit
         # 重写为更清晰的拼接
@@ -245,10 +248,9 @@ class VectorStore:
                 "topk": top_k,
             }
 
-        async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(sql, params_dict)
-                rows = await cur.fetchall()
+        async with pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute(sql, params_dict)
+            rows = await cur.fetchall()
 
         results: list[SearchResult] = []
         for row in rows:

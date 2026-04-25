@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncIterator, Optional
+from collections.abc import AsyncIterator
 
 import structlog
 
@@ -18,7 +18,7 @@ from agent_hub.pilot.domain.events import ExecutionEvent
 logger = structlog.get_logger(__name__)
 
 
-class SubscriberOverflow(RuntimeError):
+class SubscriberOverflow(RuntimeError):  # noqa: N818
     """订阅者队列溢出，已被强制关闭。"""
 
 
@@ -96,7 +96,7 @@ class EventBus:
         self,
         workspace_id: str,
         *,
-        queue_size: Optional[int] = None,
+        queue_size: int | None = None,
     ) -> EventSubscription:
         sub = EventSubscription(
             workspace_id=workspace_id,

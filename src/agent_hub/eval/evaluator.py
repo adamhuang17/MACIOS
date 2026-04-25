@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from agent_hub.eval.dataset import QAPair
 from agent_hub.rag.vector_store import SearchResult

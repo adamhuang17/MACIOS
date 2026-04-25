@@ -10,13 +10,14 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Optional
 
 import structlog
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse
 
 from agent_hub.config.settings import Settings, get_settings
 from agent_hub.core.enums import UserRole
@@ -85,9 +86,9 @@ class ChatRequest(BaseModel):
     user_id: str = Field(..., description="用户ID")
     role: str = Field(default="user", description="角色：admin / user")
     channel: str = Field(default="api", description="渠道")
-    session_id: Optional[str] = Field(default=None, description="会话ID")
-    group_id: Optional[str] = Field(default=None, description="群ID")
-    trace_id: Optional[str] = Field(default=None, description="链路追踪ID")
+    session_id: str | None = Field(default=None, description="会话ID")
+    group_id: str | None = Field(default=None, description="群ID")
+    trace_id: str | None = Field(default=None, description="链路追踪ID")
 
 
 class ChatResponse(BaseModel):
@@ -157,13 +158,11 @@ async def get_trace(trace_id: str) -> dict[str, str]:
 
 
 @app.post("/chat/stream")
-async def chat_stream(req: ChatRequest):
+async def chat_stream(req: ChatRequest) -> EventSourceResponse:
     """SSE 流式对话入口。
 
     返回 Server-Sent Events 流，逐 token 推送 LLM 生成结果。
     """
-    from sse_starlette.sse import EventSourceResponse
-
     from agent_hub.api.streaming import sse_generator
 
     pipeline = _get_pipeline()

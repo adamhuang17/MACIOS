@@ -19,7 +19,7 @@ from agent_hub.core.router import DecisionRouter, IntentRouter
 from agent_hub.core.tracer import SpanContext, get_current_trace_id, init_tracer
 
 
-def __getattr__(name: str):  # noqa: ANN001
+def __getattr__(name: str) -> object:  # noqa: ANN001
     """延迟导入 AgentPipeline 以避免循环引用。"""
     if name == "AgentPipeline":
         from agent_hub.core.pipeline import AgentPipeline

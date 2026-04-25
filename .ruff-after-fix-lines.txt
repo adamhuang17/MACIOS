@@ -1,0 +1,145 @@
+﻿scripts\bench_cache.py:26:1: E402 Module level import not at top of file
+scripts\bench_cache.py:110:9: F841 Local variable `emb` is assigned to but never used
+scripts\bench_cache.py:111:100: E501 Line too long (118 > 99)
+scripts\bench_cache.py:118:15: ANN202 Missing return type annotation for private function `mock_get`
+scripts\bench_cache.py:118:24: ANN001 Missing type annotation for function argument `key`
+scripts\bench_cache.py:134:100: E501 Line too long (142 > 99)
+scripts\bench_guard.py:25:1: E402 Module level import not at top of file
+scripts\bench_rag.py:24:1: E402 Module level import not at top of file
+scripts\bench_rag.py:25:1: E402 Module level import not at top of file
+scripts\benchmark.py:22:1: E402 Module level import not at top of file
+scripts\benchmark.py:23:1: E402 Module level import not at top of file
+scripts\benchmark.py:24:1: E402 Module level import not at top of file
+scripts\benchmark.py:25:1: E402 Module level import not at top of file
+scripts\build_eval_dataset.py:41:67: E501 Line too long (151 > 99)
+scripts\build_eval_dataset.py:52:51: E501 Line too long (180 > 99)
+scripts\build_eval_dataset.py:56:52: E501 Line too long (170 > 99)
+scripts\build_eval_dataset.py:70:71: E501 Line too long (165 > 99)
+scripts\build_eval_dataset.py:74:72: E501 Line too long (179 > 99)
+scripts\build_eval_dataset.py:78:71: E501 Line too long (144 > 99)
+scripts\build_eval_dataset.py:88:53: E501 Line too long (148 > 99)
+scripts\build_eval_dataset.py:92:64: E501 Line too long (196 > 99)
+scripts\build_eval_dataset.py:110:53: E501 Line too long (105 > 99)
+scripts\build_eval_dataset.py:114:56: E501 Line too long (119 > 99)
+scripts\build_eval_dataset.py:118:62: E501 Line too long (181 > 99)
+scripts\build_eval_dataset.py:301:100: E501 Line too long (100 > 99)
+scripts\demo_live.py:24:1: E402 Module level import not at top of file
+scripts\demo_live.py:25:1: E402 Module level import not at top of file
+scripts\demo_live.py:26:1: E402 Module level import not at top of file
+scripts\demo_live.py:27:1: E402 Module level import not at top of file
+scripts\demo_live.py:28:1: E402 Module level import not at top of file
+scripts\demo_live.py:29:1: E402 Module level import not at top of file
+scripts\demo_live.py:33:1: E402 Module level import not at top of file
+scripts\demo_live.py:34:1: E402 Module level import not at top of file
+src\agent_hub\agents\llm_agent.py:336:84: E501 Line too long (104 > 99)
+src\agent_hub\agents\llm_agent.py:362:9: N806 Variable `_SEP` in function should be lowercase
+src\agent_hub\agents\llm_agent.py:366:92: E501 Line too long (108 > 99)
+src\agent_hub\agents\llm_agent.py:372:99: E501 Line too long (120 > 99)
+src\agent_hub\agents\llm_agent.py:418:9: SIM103 Return the condition `not len(output.strip()) < 2` directly
+src\agent_hub\agents\llm_agent.py:569:9: ANN202 Missing return type annotation for private function `_call_primary_stream`
+src\agent_hub\agents\llm_agent.py:584:15: ANN201 Missing return type annotation for public function `run_stream`
+src\agent_hub\agents\registry.py:157:9: SIM102 Use a single `if` statement instead of nested `if` statements
+src\agent_hub\agents\registry.py:158:13: SIM102 Use a single `if` statement instead of nested `if` statements
+src\agent_hub\agents\tool_agent.py:171:9: SIM103 Return the negated condition directly
+src\agent_hub\api\routes.py:160:11: ANN201 Missing return type annotation for public function `chat_stream`
+src\agent_hub\api\streaming.py:25:42: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `content`
+src\agent_hub\api\streaming.py:25:56: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `**extra`
+src\agent_hub\core\__init__.py:22:5: ANN202 Missing return type annotation for private function `__getattr__`
+src\agent_hub\core\cache.py:75:15: ANN202 Missing return type annotation for private function `_get_redis`
+src\agent_hub\core\cache.py:253:37: B905 `zip()` without an explicit `strict=` parameter
+src\agent_hub\core\enums.py:6:7: UP042 Class ExecutionMode inherits from both `str` and `enum.Enum`
+src\agent_hub\core\enums.py:21:7: UP042 Class NodeType inherits from both `str` and `enum.Enum`
+src\agent_hub\core\enums.py:37:7: UP042 Class ChannelType inherits from both `str` and `enum.Enum`
+src\agent_hub\core\enums.py:50:7: UP042 Class UserRole inherits from both `str` and `enum.Enum`
+src\agent_hub\core\pipeline.py:167:15: ANN201 Missing return type annotation for public function `run_stream`
+src\agent_hub\core\pipeline.py:181:9: F841 Local variable `trace_id` is assigned to but never used
+src\agent_hub\core\router.py:77:90: E501 Line too long (105 > 99)
+src\agent_hub\core\router.py:93:87: E501 Line too long (118 > 99)
+src\agent_hub\core\router.py:95:90: E501 Line too long (106 > 99)
+src\agent_hub\core\router.py:291:39: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `response`
+src\agent_hub\core\tracer.py:49:53: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `init_tracer`
+src\agent_hub\core\tracer.py:98:21: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `get_tracer`
+src\agent_hub\core\tracer.py:167:17: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `exc_tb`
+src\agent_hub\eval\dataset.py:36:9: ANN204 Missing return type annotation for special method `__iter__`
+src\agent_hub\pilot\domain\enums.py:14:7: UP042 Class WorkspaceStatus inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:20:7: UP042 Class TaskStatus inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:34:7: UP042 Class PlanStatus inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:42:7: UP042 Class PlanStepStatus inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:55:7: UP042 Class ApprovalStatus inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:65:7: UP042 Class ArtifactStatus inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:78:7: UP042 Class WorkspaceAction inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:84:7: UP042 Class TaskAction inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:99:7: UP042 Class PlanAction inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:106:7: UP042 Class PlanStepAction inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:119:7: UP042 Class ApprovalAction inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:128:7: UP042 Class ArtifactAction inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:140:7: UP042 Class EventLevel inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:146:7: UP042 Class ActorType inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:153:7: UP042 Class EventType inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:176:7: UP042 Class RiskLevel inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:183:7: UP042 Class ApprovalTargetType inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:190:7: UP042 Class PlanStepKind inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:201:7: UP042 Class ArtifactType inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\errors.py:10:7: N818 Exception name `IllegalTransition` should be named with an Error suffix
+src\agent_hub\pilot\domain\errors.py:34:7: N818 Exception name `ConcurrencyConflict` should be named with an Error suffix
+src\agent_hub\pilot\domain\state.py:36:10: UP007 Use `X | Y` for type annotations
+src\agent_hub\pilot\domain\state.py:37:10: UP007 Use `X | Y` for type annotations
+src\agent_hub\pilot\events\bus.py:21:7: N818 Exception name `SubscriberOverflow` should be named with an Error suffix
+src\agent_hub\pilot\events\store.py:41:26: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `obj`
+src\agent_hub\pilot\events\store.py:49:17: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `obj`
+src\agent_hub\pilot\events\store.py:66:27: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `obj`
+src\agent_hub\pilot\events\store.py:96:17: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `entity`
+src\agent_hub\pilot\events\store.py:105:10: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `get_snapshot`
+src\agent_hub\pilot\events\store.py:168:17: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `entity`
+src\agent_hub\pilot\events\store.py:191:10: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `get_snapshot`
+src\agent_hub\pilot\events\store.py:348:17: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `entity`
+src\agent_hub\pilot\events\store.py:356:17: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `entity`
+src\agent_hub\pilot\events\store.py:422:10: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `get_snapshot`
+src\agent_hub\pilot\events\store.py:429:10: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `_get_snapshot_sync`
+src\agent_hub\rag\chunker.py:121:13: B007 Loop control variable `page_num` not used within loop body
+src\agent_hub\rag\vector_store.py:51:34: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `_get_pool`
+src\agent_hub\rag\vector_store.py:121:35: B905 `zip()` without an explicit `strict=` parameter
+src\agent_hub\security\guard.py:296:35: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `response`
+tests\test_agents.py:663:13: ANN202 Missing return type annotation for private function `mock_llm_call`
+tests\test_agents.py:663:27: ANN001 Missing type annotation for function argument `system_prompt`
+tests\test_agents.py:663:42: ANN001 Missing type annotation for function argument `messages`
+tests\test_agents.py:716:13: ANN202 Missing return type annotation for private function `mock_llm_call`
+tests\test_agents.py:716:27: ANN001 Missing type annotation for function argument `system_prompt`
+tests\test_agents.py:716:42: ANN001 Missing type annotation for function argument `messages`
+tests\test_agents.py:759:13: ANN202 Missing return type annotation for private function `mock_llm_call`
+tests\test_agents.py:759:27: ANN001 Missing type annotation for function argument `system_prompt`
+tests\test_agents.py:759:42: ANN001 Missing type annotation for function argument `messages`
+tests\test_api.py:15:31: ANN003 Missing type annotation for `**overrides`
+tests\test_api.py:30:5: ANN201 Missing return type annotation for public function `client`
+tests\test_api.py:33:57: N806 Variable `MockPipeline` in function should be lowercase
+tests\test_manual.py:11:11: ANN201 Missing return type annotation for public function `main`
+tests\test_pilot_domain.py:62:10: B017 Do not assert blind exception: `Exception`
+tests\test_pilot_domain.py:67:10: B017 Do not assert blind exception: `Exception`
+tests\test_pilot_event_store.py:29:17: ANN001 Missing type annotation for function argument `request`
+tests\test_pilot_event_store.py:29:26: ANN001 Missing type annotation for function argument `tmp_path`
+tests\test_pilot_event_store.py:62:50: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:71:54: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:79:48: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:90:43: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:99:34: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:112:43: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:120:51: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:128:47: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:144:44: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:159:50: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:167:45: ANN001 Missing type annotation for function argument `tmp_path`
+tests\test_pipeline.py:24:5: ANN201 Missing return type annotation for public function `settings`
+tests\test_pipeline.py:29:5: ANN201 Missing return type annotation for public function `pipeline`
+tests\test_pipeline.py:29:14: ANN001 Missing type annotation for function argument `settings`
+tests\test_pipeline.py:98:100: E501 Line too long (102 > 99)
+tests\test_pipeline.py:99:100: E501 Line too long (102 > 99)
+tests\test_pipeline.py:100:100: E501 Line too long (107 > 99)
+tests\test_pipeline.py:115:66: ANN003 Missing type annotation for `**kwargs`
+tests\test_pipeline_fallback.py:26:9: ANN201 Missing return type annotation for public function `pipeline`
+tests\test_pipeline_fallback.py:26:24: ANN001 Missing type annotation for function argument `tmp_path`
+tests\test_rag.py:78:87: E501 Line too long (109 > 99)
+tests\test_rag.py:139:9: F841 Local variable `keys` is assigned to but never used
+tests\test_rag.py:267:9: ANN202 Missing return type annotation for private function `_make_pipeline`
+tests\test_rag.py:281:94: E501 Line too long (100 > 99)
+Found 143 errors.
+No fixes available (36 hidden fixes can be enabled with the `--unsafe-fixes` option).

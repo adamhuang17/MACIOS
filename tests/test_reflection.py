@@ -10,15 +10,14 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent_hub.core.models import AgentResult, SubTask
+from agent_hub.core.models import SubTask
 from agent_hub.rag.query_rewriter import QueryRewriter
 from agent_hub.rag.relevance_evaluator import RelevanceEvaluator
 from agent_hub.rag.vector_store import SearchResult
-
 
 # ═══════════════════════════════════════════════════════
 # QueryRewriter 测试

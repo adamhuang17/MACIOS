@@ -14,8 +14,8 @@ import json
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Optional, Protocol, runtime_checkable
+from datetime import UTC, datetime
+from typing import Any, Protocol, runtime_checkable
 
 from agent_hub.pilot.domain.errors import ConcurrencyConflict
 from agent_hub.pilot.domain.events import ExecutionEvent
@@ -27,7 +27,6 @@ from agent_hub.pilot.domain.models import (
     Task,
     Workspace,
 )
-
 
 _ENTITY_REGISTRY: dict[str, type[Any]] = {
     "workspace": Workspace,
@@ -96,20 +95,20 @@ class SnapshotStore(Protocol):
         self,
         entity: Any,
         *,
-        expected_version: Optional[int] = None,
+        expected_version: int | None = None,
     ) -> None: ...
 
     async def get_snapshot(
         self,
         entity_type: str,
         entity_id: str,
-    ) -> Optional[Any]: ...
+    ) -> Any | None: ...
 
     async def list_snapshots(
         self,
         entity_type: str,
         *,
-        workspace_id: Optional[str] = None,
+        workspace_id: str | None = None,
     ) -> list[Any]: ...
 
 
@@ -168,7 +167,7 @@ class InMemoryEventStore:
         self,
         entity: Any,
         *,
-        expected_version: Optional[int] = None,
+        expected_version: int | None = None,
     ) -> None:
         entity_type = _entity_type_of(entity)
         entity_id = _id_of(entity)
@@ -189,7 +188,7 @@ class InMemoryEventStore:
         self,
         entity_type: str,
         entity_id: str,
-    ) -> Optional[Any]:
+    ) -> Any | None:
         async with self._lock:
             return self._snapshots.get((entity_type, entity_id))
 
@@ -197,7 +196,7 @@ class InMemoryEventStore:
         self,
         entity_type: str,
         *,
-        workspace_id: Optional[str] = None,
+        workspace_id: str | None = None,
     ) -> list[Any]:
         async with self._lock:
             results = [
@@ -307,7 +306,7 @@ class SQLiteEventStore:
                         stored.idempotency_key,
                         stored.type.value,
                         payload,
-                        stored.created_at.astimezone(timezone.utc).isoformat(),
+                        stored.created_at.astimezone(UTC).isoformat(),
                     ),
                 )
                 cur.execute("COMMIT")
@@ -348,20 +347,20 @@ class SQLiteEventStore:
         self,
         entity: Any,
         *,
-        expected_version: Optional[int] = None,
+        expected_version: int | None = None,
     ) -> None:
         await asyncio.to_thread(self._put_snapshot_sync, entity, expected_version)
 
     def _put_snapshot_sync(
         self,
         entity: Any,
-        expected_version: Optional[int],
+        expected_version: int | None,
     ) -> None:
         entity_type = _entity_type_of(entity)
         entity_id = _id_of(entity)
         workspace_id = _workspace_id_of(entity)
         payload = entity.model_dump_json()
-        updated_at = entity.updated_at.astimezone(timezone.utc).isoformat()
+        updated_at = entity.updated_at.astimezone(UTC).isoformat()
 
         with self._lock:
             cur = self._conn.cursor()
@@ -420,14 +419,14 @@ class SQLiteEventStore:
         self,
         entity_type: str,
         entity_id: str,
-    ) -> Optional[Any]:
+    ) -> Any | None:
         return await asyncio.to_thread(self._get_snapshot_sync, entity_type, entity_id)
 
     def _get_snapshot_sync(
         self,
         entity_type: str,
         entity_id: str,
-    ) -> Optional[Any]:
+    ) -> Any | None:
         cls = _ENTITY_REGISTRY.get(entity_type)
         if cls is None:
             msg = f"未知 entity_type: {entity_type}"
@@ -446,7 +445,7 @@ class SQLiteEventStore:
         self,
         entity_type: str,
         *,
-        workspace_id: Optional[str] = None,
+        workspace_id: str | None = None,
     ) -> list[Any]:
         return await asyncio.to_thread(
             self._list_snapshots_sync, entity_type, workspace_id,
@@ -455,7 +454,7 @@ class SQLiteEventStore:
     def _list_snapshots_sync(
         self,
         entity_type: str,
-        workspace_id: Optional[str],
+        workspace_id: str | None,
     ) -> list[Any]:
         cls = _ENTITY_REGISTRY.get(entity_type)
         if cls is None:

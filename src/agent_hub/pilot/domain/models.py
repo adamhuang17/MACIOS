@@ -7,8 +7,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -27,7 +27,7 @@ from agent_hub.pilot.domain.enums import (
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _new_id(prefix: str) -> str:
@@ -53,15 +53,15 @@ class _PilotModel(BaseModel):
 
 class Workspace(_PilotModel):
     workspace_id: str = Field(default_factory=lambda: _new_id("ws"))
-    tenant_key: Optional[str] = None
+    tenant_key: str | None = None
     title: str
     source_channel: str
-    source_conversation_id: Optional[str] = None
-    feishu_chat_id: Optional[str] = None
+    source_conversation_id: str | None = None
+    feishu_chat_id: str | None = None
     created_by: str
     members: list[str] = Field(default_factory=list)
     status: WorkspaceStatus = WorkspaceStatus.ACTIVE
-    active_task_id: Optional[str] = None
+    active_task_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -72,20 +72,20 @@ class Task(_PilotModel):
     task_id: str = Field(default_factory=lambda: _new_id("task"))
     workspace_id: str
     trace_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    idempotency_key: Optional[str] = None
-    source_message_id: Optional[str] = None
+    idempotency_key: str | None = None
+    source_message_id: str | None = None
     origin_text: str
     requester_id: str
     status: TaskStatus = TaskStatus.CREATED
-    plan_id: Optional[str] = None
-    current_step_id: Optional[str] = None
+    plan_id: str | None = None
+    current_step_id: str | None = None
     approval_ids: list[str] = Field(default_factory=list)
     artifact_ids: list[str] = Field(default_factory=list)
-    parent_task_id: Optional[str] = None
-    parent_step_id: Optional[str] = None
+    parent_task_id: str | None = None
+    parent_step_id: str | None = None
     retry_count: int = 0
-    error: Optional[str] = None
-    final_summary: Optional[str] = None
+    error: str | None = None
+    final_summary: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -97,7 +97,7 @@ class Plan(_PilotModel):
     workspace_id: str
     task_id: str
     plan_version: int = 1
-    parent_plan_id: Optional[str] = None
+    parent_plan_id: str | None = None
     goal: str
     assumptions: list[str] = Field(default_factory=list)
     step_ids: list[str] = Field(default_factory=list)
@@ -119,7 +119,7 @@ class PlanStep(_PilotModel):
     skill_name: str
     input_params: dict[str, Any] = Field(default_factory=dict)
     inputs_from: list[str] = Field(default_factory=list)
-    output_artifact_ref: Optional[str] = None
+    output_artifact_ref: str | None = None
     depends_on: list[str] = Field(default_factory=list)
     risk_level: RiskLevel = RiskLevel.READ
     requires_approval: bool = False
@@ -127,12 +127,12 @@ class PlanStep(_PilotModel):
     retry_count: int = 0
     max_retries: int = 0
     timeout_ms: int = 30_000
-    idempotency_key: Optional[str] = None
-    dry_run_result: Optional[dict[str, Any]] = None
-    output_artifact_id: Optional[str] = None
-    started_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None
-    error: Optional[str] = None
+    idempotency_key: str | None = None
+    dry_run_result: dict[str, Any] | None = None
+    output_artifact_id: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
 
 
 # ── Approval ─────────────────────────────────────────
@@ -145,7 +145,7 @@ class ApprovalDecision(BaseModel):
 
     approver_id: str
     decision: str  # approved / rejected / requested_changes
-    comment: Optional[str] = None
+    comment: str | None = None
     decided_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -157,14 +157,14 @@ class Approval(_PilotModel):
     target_id: str
     requester_id: str
     approvers: list[str] = Field(default_factory=list)
-    reason: Optional[str] = None
-    preview: Optional[str] = None
+    reason: str | None = None
+    preview: str | None = None
     status: ApprovalStatus = ApprovalStatus.REQUESTED
     decision_records: list[ApprovalDecision] = Field(default_factory=list)
-    channel_message_id: Optional[str] = None
-    expires_at: Optional[datetime] = None
-    decided_at: Optional[datetime] = None
-    superseded_by: Optional[str] = None
+    channel_message_id: str | None = None
+    expires_at: datetime | None = None
+    decided_at: datetime | None = None
+    superseded_by: str | None = None
 
 
 # ── Artifact ─────────────────────────────────────────
@@ -174,16 +174,16 @@ class Artifact(_PilotModel):
     artifact_id: str = Field(default_factory=lambda: _new_id("art"))
     workspace_id: str
     task_id: str
-    step_id: Optional[str] = None
+    step_id: str | None = None
     type: ArtifactType
     title: str
     artifact_version: int = 1
-    parent_artifact_id: Optional[str] = None
+    parent_artifact_id: str | None = None
     status: ArtifactStatus = ArtifactStatus.DRAFT
-    uri: Optional[str] = None
-    storage_key: Optional[str] = None
-    mime_type: Optional[str] = None
-    checksum: Optional[str] = None
-    feishu_token: Optional[str] = None
-    share_url: Optional[str] = None
+    uri: str | None = None
+    storage_key: str | None = None
+    mime_type: str | None = None
+    checksum: str | None = None
+    feishu_token: str | None = None
+    share_url: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from agent_hub.api.streaming import sse_generator
 from agent_hub.core.rate_limiter import RateLimiter
-
 
 # ═══════════════════════════════════════════════════════
 # RateLimiter 测试
@@ -24,7 +24,7 @@ class TestRateLimiter:
     async def test_basic_call(self) -> None:
         limiter = RateLimiter(max_concurrent=5, default_timeout=10)
 
-        async def coro():
+        async def coro() -> int:
             return 42
 
         result = await limiter.call(coro())
@@ -35,7 +35,7 @@ class TestRateLimiter:
     async def test_timeout(self) -> None:
         limiter = RateLimiter(max_concurrent=5, default_timeout=0.1)
 
-        async def slow_coro():
+        async def slow_coro() -> str:
             await asyncio.sleep(10)
             return "done"
 
@@ -48,7 +48,7 @@ class TestRateLimiter:
     async def test_fallback_on_timeout(self) -> None:
         limiter = RateLimiter(max_concurrent=5, default_timeout=0.1)
 
-        async def slow_coro():
+        async def slow_coro() -> str:
             await asyncio.sleep(10)
             return "done"
 
@@ -63,7 +63,7 @@ class TestRateLimiter:
         concurrent_count = 0
         max_concurrent = 0
 
-        async def tracked_coro():
+        async def tracked_coro() -> str:
             nonlocal concurrent_count, max_concurrent
             concurrent_count += 1
             max_concurrent = max(max_concurrent, concurrent_count)
@@ -81,7 +81,7 @@ class TestRateLimiter:
     async def test_no_timeout(self) -> None:
         limiter = RateLimiter(max_concurrent=5, default_timeout=0)
 
-        async def coro():
+        async def coro() -> str:
             return "no timeout"
 
         result = await limiter.call(coro())
@@ -123,7 +123,7 @@ class TestSSEGenerator:
         """有 run_stream 时逐 chunk 推送。"""
         mock_pipeline = MagicMock()
 
-        async def mock_stream(_input):
+        async def mock_stream(_input: object) -> AsyncIterator[dict[str, str]]:
             yield {"type": "token", "content": "Hello "}
             yield {"type": "token", "content": "World"}
 
@@ -147,9 +147,9 @@ class TestSSEGenerator:
         """异常时推送 error 事件。"""
         mock_pipeline = MagicMock()
 
-        async def mock_stream(_input):
+        async def mock_stream(_input: object) -> AsyncIterator[dict[str, str]]:
             raise RuntimeError("LLM 炸了")
-            yield  # noqa: unreachable
+            yield {"type": "token", "content": ""}
 
         mock_pipeline.run_stream = mock_stream
 

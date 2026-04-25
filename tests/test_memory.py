@@ -11,9 +11,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import pytest
-import yaml
-
 from agent_hub.core.models import MemoryEntry
 from agent_hub.memory import MemoryManager
 from agent_hub.memory.persistent import (
@@ -23,7 +20,6 @@ from agent_hub.memory.persistent import (
     _parse_frontmatter,
 )
 from agent_hub.memory.session import SessionMemory
-
 
 # ── helpers ───────────────────────────────────────────
 

@@ -7,7 +7,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, TypeVar
+from collections.abc import Awaitable
+from typing import TypeVar
 
 import structlog
 
@@ -70,7 +71,7 @@ class RateLimiter:
                 if effective_timeout > 0:
                     return await asyncio.wait_for(coro, timeout=effective_timeout)
                 return await coro
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._timeouts += 1
                 logger.warning(
                     "rate_limiter_timeout",
@@ -97,6 +98,6 @@ class RateLimiter:
         """
         try:
             return await self.call(coro, timeout)
-        except (asyncio.TimeoutError, Exception) as exc:
+        except (TimeoutError, Exception) as exc:
             logger.warning("rate_limiter_fallback", error=str(exc))
             return fallback

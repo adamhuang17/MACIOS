@@ -1,0 +1,310 @@
+﻿scripts\bench_cache.py:26:1: E402 Module level import not at top of file
+scripts\bench_cache.py:26:1: I001 [*] Import block is un-sorted or un-formatted
+scripts\bench_cache.py:85:11: F541 [*] f-string without any placeholders
+scripts\bench_cache.py:111:9: F841 Local variable `emb` is assigned to but never used
+scripts\bench_cache.py:112:100: E501 Line too long (118 > 99)
+scripts\bench_cache.py:119:15: ANN202 Missing return type annotation for private function `mock_get`
+scripts\bench_cache.py:119:24: ANN001 Missing type annotation for function argument `key`
+scripts\bench_cache.py:135:100: E501 Line too long (142 > 99)
+scripts\bench_cache.py:153:11: F541 [*] f-string without any placeholders
+scripts\bench_cache.py:184:11: F541 [*] f-string without any placeholders
+scripts\bench_guard.py:25:1: E402 Module level import not at top of file
+scripts\bench_guard.py:25:1: I001 [*] Import block is un-sorted or un-formatted
+scripts\bench_guard.py:183:11: F541 [*] f-string without any placeholders
+scripts\bench_guard.py:191:15: F541 [*] f-string without any placeholders
+scripts\bench_guard.py:198:15: F541 [*] f-string without any placeholders
+scripts\bench_guard.py:204:11: F541 [*] f-string without any placeholders
+scripts\bench_guard.py:205:11: F541 [*] f-string without any placeholders
+scripts\bench_rag.py:24:1: E402 Module level import not at top of file
+scripts\bench_rag.py:25:1: E402 Module level import not at top of file
+scripts\bench_rag.py:89:11: F541 [*] f-string without any placeholders
+scripts\benchmark.py:22:1: E402 Module level import not at top of file
+scripts\benchmark.py:23:1: E402 Module level import not at top of file
+scripts\benchmark.py:24:1: E402 Module level import not at top of file
+scripts\benchmark.py:25:1: E402 Module level import not at top of file
+scripts\build_eval_dataset.py:41:67: E501 Line too long (151 > 99)
+scripts\build_eval_dataset.py:52:51: E501 Line too long (180 > 99)
+scripts\build_eval_dataset.py:56:52: E501 Line too long (170 > 99)
+scripts\build_eval_dataset.py:70:71: E501 Line too long (165 > 99)
+scripts\build_eval_dataset.py:74:72: E501 Line too long (179 > 99)
+scripts\build_eval_dataset.py:78:71: E501 Line too long (144 > 99)
+scripts\build_eval_dataset.py:88:53: E501 Line too long (148 > 99)
+scripts\build_eval_dataset.py:92:64: E501 Line too long (196 > 99)
+scripts\build_eval_dataset.py:110:53: E501 Line too long (105 > 99)
+scripts\build_eval_dataset.py:114:56: E501 Line too long (119 > 99)
+scripts\build_eval_dataset.py:118:62: E501 Line too long (181 > 99)
+scripts\build_eval_dataset.py:238:5: I001 [*] Import block is un-sorted or un-formatted
+scripts\build_eval_dataset.py:265:5: I001 [*] Import block is un-sorted or un-formatted
+scripts\build_eval_dataset.py:265:53: F401 [*] `agent_hub.eval.dataset.QAPair` imported but unused
+scripts\build_eval_dataset.py:303:100: E501 Line too long (100 > 99)
+scripts\demo_live.py:11:1: I001 [*] Import block is un-sorted or un-formatted
+scripts\demo_live.py:23:1: E402 Module level import not at top of file
+scripts\demo_live.py:23:1: I001 [*] Import block is un-sorted or un-formatted
+scripts\demo_live.py:24:1: E402 Module level import not at top of file
+scripts\demo_live.py:25:1: E402 Module level import not at top of file
+scripts\demo_live.py:29:1: E402 Module level import not at top of file
+scripts\demo_live.py:30:1: E402 Module level import not at top of file
+scripts\demo_live.py:31:1: E402 Module level import not at top of file
+scripts\demo_live.py:32:1: E402 Module level import not at top of file
+scripts\demo_live.py:33:1: E402 Module level import not at top of file
+src\agent_hub\agents\llm_agent.py:336:84: E501 Line too long (104 > 99)
+src\agent_hub\agents\llm_agent.py:362:9: N806 Variable `_SEP` in function should be lowercase
+src\agent_hub\agents\llm_agent.py:366:92: E501 Line too long (108 > 99)
+src\agent_hub\agents\llm_agent.py:372:99: E501 Line too long (120 > 99)
+src\agent_hub\agents\llm_agent.py:418:9: SIM103 Return the condition `not len(output.strip()) < 2` directly
+src\agent_hub\agents\llm_agent.py:569:9: ANN202 Missing return type annotation for private function `_call_primary_stream`
+src\agent_hub\agents\llm_agent.py:584:15: ANN201 Missing return type annotation for public function `run_stream`
+src\agent_hub\agents\reflection_agent.py:24:44: F401 [*] `agent_hub.rag.vector_store.SearchResult` imported but unused
+src\agent_hub\agents\registry.py:10:8: F401 [*] `operator` imported but unused
+src\agent_hub\agents\registry.py:15:1: UP035 [*] Import from `collections.abc` instead: `Awaitable`, `Callable`
+src\agent_hub\agents\registry.py:157:9: SIM102 Use a single `if` statement instead of nested `if` statements
+src\agent_hub\agents\registry.py:158:13: SIM102 Use a single `if` statement instead of nested `if` statements
+src\agent_hub\agents\registry.py:250:27: UP017 [*] Use `datetime.UTC` alias
+src\agent_hub\agents\tool_agent.py:171:9: SIM103 Return the negated condition directly
+src\agent_hub\api\routes.py:14:1: UP035 [*] Import from `collections.abc` instead: `AsyncIterator`
+src\agent_hub\api\routes.py:88:17: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\api\routes.py:89:15: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\api\routes.py:90:15: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\api\routes.py:160:11: ANN201 Missing return type annotation for public function `chat_stream`
+src\agent_hub\api\streaming.py:13:1: UP035 [*] Import from `collections.abc` instead: `AsyncGenerator`
+src\agent_hub\api\streaming.py:24:42: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `content`
+src\agent_hub\api\streaming.py:24:56: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `**extra`
+src\agent_hub\core\__init__.py:22:5: ANN202 Missing return type annotation for private function `__getattr__`
+src\agent_hub\core\cache.py:75:15: ANN202 Missing return type annotation for private function `_get_redis`
+src\agent_hub\core\cache.py:253:37: B905 `zip()` without an explicit `strict=` parameter
+src\agent_hub\core\enums.py:6:7: UP042 Class ExecutionMode inherits from both `str` and `enum.Enum`
+src\agent_hub\core\enums.py:21:7: UP042 Class NodeType inherits from both `str` and `enum.Enum`
+src\agent_hub\core\enums.py:37:7: UP042 Class ChannelType inherits from both `str` and `enum.Enum`
+src\agent_hub\core\enums.py:50:7: UP042 Class UserRole inherits from both `str` and `enum.Enum`
+src\agent_hub\core\models.py:8:1: I001 [*] Import block is un-sorted or un-formatted
+src\agent_hub\core\models.py:36:17: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\models.py:37:15: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\models.py:64:22: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\models.py:148:13: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\models.py:149:19: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\models.py:150:18: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\models.py:163:19: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\models.py:184:19: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\models.py:224:13: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\models.py:225:12: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\models.py:228:18: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\models.py:228:27: UP037 [*] Remove quotes from type annotation
+src\agent_hub\core\models.py:252:17: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\models.py:257:16: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\pipeline.py:167:15: ANN201 Missing return type annotation for public function `run_stream`
+src\agent_hub\core\pipeline.py:179:43: F401 [*] `agent_hub.core.tracer.SpanContext` imported but unused
+src\agent_hub\core\pipeline.py:181:9: F841 Local variable `trace_id` is assigned to but never used
+src\agent_hub\core\rate_limiter.py:10:1: UP035 [*] Import from `collections.abc` instead: `Awaitable`, `Callable`
+src\agent_hub\core\rate_limiter.py:10:20: F401 [*] `typing.Any` imported but unused
+src\agent_hub\core\rate_limiter.py:10:36: F401 [*] `typing.Callable` imported but unused
+src\agent_hub\core\rate_limiter.py:73:20: UP041 [*] Replace aliased errors with `TimeoutError`
+src\agent_hub\core\rate_limiter.py:100:16: UP041 [*] Replace aliased errors with `TimeoutError`
+src\agent_hub\core\router.py:41:49: F401 [*] `agent_hub.core.enums.UserRole` imported but unused
+src\agent_hub\core\router.py:77:90: E501 Line too long (105 > 99)
+src\agent_hub\core\router.py:93:87: E501 Line too long (118 > 99)
+src\agent_hub\core\router.py:95:90: E501 Line too long (106 > 99)
+src\agent_hub\core\router.py:291:39: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `response`
+src\agent_hub\core\tracer.py:49:53: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `init_tracer`
+src\agent_hub\core\tracer.py:98:21: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `get_tracer`
+src\agent_hub\core\tracer.py:137:45: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\core\tracer.py:167:17: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `exc_tb`
+src\agent_hub\eval\dataset.py:36:9: ANN204 Missing return type annotation for special method `__iter__`
+src\agent_hub\eval\evaluator.py:9:20: F401 [*] `typing.Any` imported but unused
+src\agent_hub\eval\reporter.py:24:13: F541 [*] f-string without any placeholders
+src\agent_hub\eval\reporter.py:27:13: F541 [*] f-string without any placeholders
+src\agent_hub\eval\reporter.py:28:13: F541 [*] f-string without any placeholders
+src\agent_hub\eval\reporter.py:29:13: F541 [*] f-string without any placeholders
+src\agent_hub\eval\reporter.py:30:13: F541 [*] f-string without any placeholders
+src\agent_hub\eval\reporter.py:31:13: F541 [*] f-string without any placeholders
+src\agent_hub\eval\reporter.py:35:13: F541 [*] f-string without any placeholders
+src\agent_hub\eval\reporter.py:40:17: F541 [*] f-string without any placeholders
+src\agent_hub\eval\reporter.py:41:17: F541 [*] f-string without any placeholders
+src\agent_hub\eval\reporter.py:42:17: F541 [*] f-string without any placeholders
+src\agent_hub\eval\reporter.py:43:17: F541 [*] f-string without any placeholders
+src\agent_hub\memory\memory_ops.py:10:22: F401 [*] `datetime.datetime` imported but unused
+src\agent_hub\pilot\domain\enums.py:7:1: I001 [*] Import block is un-sorted or un-formatted
+src\agent_hub\pilot\domain\enums.py:15:7: UP042 Class WorkspaceStatus inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:21:7: UP042 Class TaskStatus inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:35:7: UP042 Class PlanStatus inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:43:7: UP042 Class PlanStepStatus inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:56:7: UP042 Class ApprovalStatus inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:66:7: UP042 Class ArtifactStatus inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:79:7: UP042 Class WorkspaceAction inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:85:7: UP042 Class TaskAction inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:100:7: UP042 Class PlanAction inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:107:7: UP042 Class PlanStepAction inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:120:7: UP042 Class ApprovalAction inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:129:7: UP042 Class ArtifactAction inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:141:7: UP042 Class EventLevel inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:147:7: UP042 Class ActorType inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:154:7: UP042 Class EventType inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:177:7: UP042 Class RiskLevel inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:184:7: UP042 Class ApprovalTargetType inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:191:7: UP042 Class PlanStepKind inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\enums.py:202:7: UP042 Class ArtifactType inherits from both `str` and `enum.Enum`
+src\agent_hub\pilot\domain\errors.py:10:7: N818 Exception name `IllegalTransition` should be named with an Error suffix
+src\agent_hub\pilot\domain\errors.py:34:7: N818 Exception name `ConcurrencyConflict` should be named with an Error suffix
+src\agent_hub\pilot\domain\events.py:15:25: UP017 [*] Use `datetime.UTC` alias
+src\agent_hub\pilot\domain\events.py:30:15: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\events.py:31:14: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\events.py:32:14: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\events.py:33:14: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\events.py:34:18: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\events.py:35:18: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\events.py:39:15: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\events.py:42:22: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:30:25: UP017 [*] Use `datetime.UTC` alias
+src\agent_hub\pilot\domain\models.py:56:17: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:59:29: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:60:21: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:64:21: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:75:22: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:76:24: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:80:14: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:81:22: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:84:21: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:85:21: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:87:12: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:88:20: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:100:21: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:122:26: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:130:22: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:131:21: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:132:25: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:133:17: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:134:18: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:135:12: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:148:14: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:160:13: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:161:14: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:164:25: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:165:17: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:166:17: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:167:20: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:177:14: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:181:25: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:183:10: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:184:18: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:185:16: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:186:15: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:187:19: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\models.py:188:16: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\state.py:6:1: I001 [*] Import block is un-sorted or un-formatted
+src\agent_hub\pilot\domain\state.py:9:1: UP035 [*] Import from `collections.abc` instead: `Iterable`
+src\agent_hub\pilot\domain\state.py:36:10: UP007 Use `X | Y` for type annotations
+src\agent_hub\pilot\domain\state.py:37:10: UP007 Use `X | Y` for type annotations
+src\agent_hub\pilot\domain\state.py:48:25: UP017 [*] Use `datetime.UTC` alias
+src\agent_hub\pilot\domain\state.py:172:10: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\domain\state.py:173:12: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\events\bus.py:12:1: UP035 [*] Import from `collections.abc` instead: `AsyncIterator`
+src\agent_hub\pilot\events\bus.py:21:7: N818 Exception name `SubscriberOverflow` should be named with an Error suffix
+src\agent_hub\pilot\events\bus.py:99:21: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\events\store.py:10:1: I001 [*] Import block is un-sorted or un-formatted
+src\agent_hub\pilot\events\store.py:42:26: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `obj`
+src\agent_hub\pilot\events\store.py:50:17: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `obj`
+src\agent_hub\pilot\events\store.py:67:27: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `obj`
+src\agent_hub\pilot\events\store.py:97:17: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `entity`
+src\agent_hub\pilot\events\store.py:99:27: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\events\store.py:106:10: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\events\store.py:106:10: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `get_snapshot`
+src\agent_hub\pilot\events\store.py:112:23: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\events\store.py:169:17: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `entity`
+src\agent_hub\pilot\events\store.py:171:27: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\events\store.py:192:10: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\events\store.py:192:10: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `get_snapshot`
+src\agent_hub\pilot\events\store.py:200:23: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\events\store.py:310:54: UP017 [*] Use `datetime.UTC` alias
+src\agent_hub\pilot\events\store.py:349:17: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `entity`
+src\agent_hub\pilot\events\store.py:351:27: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\events\store.py:357:17: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `entity`
+src\agent_hub\pilot\events\store.py:358:27: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\events\store.py:364:51: UP017 [*] Use `datetime.UTC` alias
+src\agent_hub\pilot\events\store.py:423:10: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\events\store.py:423:10: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `get_snapshot`
+src\agent_hub\pilot\events\store.py:430:10: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\events\store.py:430:10: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `_get_snapshot_sync`
+src\agent_hub\pilot\events\store.py:449:23: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\pilot\events\store.py:458:23: UP045 [*] Use `X | None` for type annotations
+src\agent_hub\rag\chunker.py:121:13: B007 Loop control variable `page_num` not used within loop body
+src\agent_hub\rag\pipeline.py:16:40: F401 [*] `agent_hub.rag.vector_store.ChunkDoc` imported but unused
+src\agent_hub\rag\sparse_retriever.py:8:20: F401 [*] `typing.Any` imported but unused
+src\agent_hub\rag\vector_store.py:10:22: F401 [*] `datetime.datetime` imported but unused
+src\agent_hub\rag\vector_store.py:52:34: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `_get_pool`
+src\agent_hub\rag\vector_store.py:122:35: B905 `zip()` without an explicit `strict=` parameter
+src\agent_hub\rag\vector_store.py:177:9: SIM117 [*] Use a single `with` statement with multiple contexts instead of nested `with` statements
+src\agent_hub\rag\vector_store.py:248:9: SIM117 [*] Use a single `with` statement with multiple contexts instead of nested `with` statements
+src\agent_hub\security\guard.py:31:22: F401 [*] `pydantic.BaseModel` imported but unused
+src\agent_hub\security\guard.py:31:33: F401 [*] `pydantic.Field` imported but unused
+src\agent_hub\security\guard.py:297:35: ANN401 Dynamically typed expressions (typing.Any) are disallowed in `response`
+tests\test_agents.py:11:1: I001 [*] Import block is un-sorted or un-formatted
+tests\test_agents.py:26:35: F401 [*] `agent_hub.core.models.AgentResult` imported but unused
+tests\test_agents.py:26:61: F401 [*] `agent_hub.core.models.ReActStep` imported but unused
+tests\test_agents.py:26:72: F401 [*] `agent_hub.core.models.ReActTrace` imported but unused
+tests\test_agents.py:664:13: ANN202 Missing return type annotation for private function `mock_llm_call`
+tests\test_agents.py:664:27: ANN001 Missing type annotation for function argument `system_prompt`
+tests\test_agents.py:664:42: ANN001 Missing type annotation for function argument `messages`
+tests\test_agents.py:717:13: ANN202 Missing return type annotation for private function `mock_llm_call`
+tests\test_agents.py:717:27: ANN001 Missing type annotation for function argument `system_prompt`
+tests\test_agents.py:717:42: ANN001 Missing type annotation for function argument `messages`
+tests\test_agents.py:760:13: ANN202 Missing return type annotation for private function `mock_llm_call`
+tests\test_agents.py:760:27: ANN001 Missing type annotation for function argument `system_prompt`
+tests\test_agents.py:760:42: ANN001 Missing type annotation for function argument `messages`
+tests\test_api.py:3:1: I001 [*] Import block is un-sorted or un-formatted
+tests\test_api.py:16:31: ANN003 Missing type annotation for `**overrides`
+tests\test_api.py:31:5: ANN201 Missing return type annotation for public function `client`
+tests\test_api.py:34:57: N806 Variable `MockPipeline` in function should be lowercase
+tests\test_cache.py:5:49: F401 [*] `unittest.mock.patch` imported but unused
+tests\test_cache.py:9:34: F401 [*] `agent_hub.core.cache.CacheHit` imported but unused
+tests\test_eval.py:6:1: I001 [*] Import block is un-sorted or un-formatted
+tests\test_eval.py:11:8: F401 [*] `pytest` imported but unused
+tests\test_guard.py:10:1: I001 [*] Import block is un-sorted or un-formatted
+tests\test_guard.py:13:20: F401 [*] `typing.Any` imported but unused
+tests\test_guard.py:18:35: F401 [*] `agent_hub.core.models.GuardResult` imported but unused
+tests\test_manual.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+tests\test_manual.py:10:11: ANN201 Missing return type annotation for public function `main`
+tests\test_memory.py:9:1: I001 [*] Import block is un-sorted or un-formatted
+tests\test_memory.py:14:8: F401 [*] `pytest` imported but unused
+tests\test_memory.py:15:8: F401 [*] `yaml` imported but unused
+tests\test_memory_v2.py:6:1: I001 [*] Import block is un-sorted or un-formatted
+tests\test_memory_v2.py:8:8: F401 [*] `tempfile` imported but unused
+tests\test_models.py:3:1: I001 [*] Import block is un-sorted or un-formatted
+tests\test_models.py:5:8: F401 [*] `asyncio` imported but unused
+tests\test_pilot_domain.py:3:1: I001 [*] Import block is un-sorted or un-formatted
+tests\test_pilot_domain.py:58:41: UP017 [*] Use `datetime.UTC` alias
+tests\test_pilot_domain.py:63:10: B017 Do not assert blind exception: `Exception`
+tests\test_pilot_domain.py:68:10: B017 Do not assert blind exception: `Exception`
+tests\test_pilot_domain.py:139:81: UP017 [*] Use `datetime.UTC` alias
+tests\test_pilot_event_store.py:6:1: I001 [*] Import block is un-sorted or un-formatted
+tests\test_pilot_event_store.py:8:1: UP035 [*] Import from `collections.abc` instead: `AsyncIterator`
+tests\test_pilot_event_store.py:30:17: ANN001 Missing type annotation for function argument `request`
+tests\test_pilot_event_store.py:30:26: ANN001 Missing type annotation for function argument `tmp_path`
+tests\test_pilot_event_store.py:63:50: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:72:54: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:80:48: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:91:43: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:100:34: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:113:43: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:121:51: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:129:47: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:145:44: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:160:50: ANN001 Missing type annotation for function argument `store`
+tests\test_pilot_event_store.py:168:45: ANN001 Missing type annotation for function argument `tmp_path`
+tests\test_pipeline.py:3:1: I001 [*] Import block is un-sorted or un-formatted
+tests\test_pipeline.py:25:5: ANN201 Missing return type annotation for public function `settings`
+tests\test_pipeline.py:30:5: ANN201 Missing return type annotation for public function `pipeline`
+tests\test_pipeline.py:30:14: ANN001 Missing type annotation for function argument `settings`
+tests\test_pipeline.py:99:100: E501 Line too long (102 > 99)
+tests\test_pipeline.py:100:100: E501 Line too long (102 > 99)
+tests\test_pipeline.py:101:100: E501 Line too long (107 > 99)
+tests\test_pipeline.py:116:66: ANN003 Missing type annotation for `**kwargs`
+tests\test_pipeline_fallback.py:10:1: I001 [*] Import block is un-sorted or un-formatted
+tests\test_pipeline_fallback.py:27:9: ANN201 Missing return type annotation for public function `pipeline`
+tests\test_pipeline_fallback.py:27:24: ANN001 Missing type annotation for function argument `tmp_path`
+tests\test_rag.py:7:1: I001 [*] Import block is un-sorted or un-formatted
+tests\test_rag.py:9:49: F401 [*] `unittest.mock.patch` imported but unused
+tests\test_rag.py:79:87: E501 Line too long (109 > 99)
+tests\test_rag.py:140:9: F841 Local variable `keys` is assigned to but never used
+tests\test_rag.py:268:9: ANN202 Missing return type annotation for private function `_make_pipeline`
+tests\test_rag.py:282:94: E501 Line too long (100 > 99)
+Found 308 errors.
+[*] 165 fixable with the `--fix` option (36 hidden fixes can be enabled with the `--unsafe-fixes` option).

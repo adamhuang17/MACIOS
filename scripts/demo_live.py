@@ -9,10 +9,11 @@
 """
 
 from __future__ import annotations  # 启用延迟注解求值，允许在类型提示中用
+
 import asyncio  # 异步 I/O 框架，提供 async/await 事件循环
-import io  
-import sys  
-from pathlib import Path  
+import io
+import sys
+from pathlib import Path
 
 # Windows 终端编码修正
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -20,6 +21,9 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="repla
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from agent_hub.agents.llm_agent import LLMAgent
+from agent_hub.agents.registry import ToolRegistry
+from agent_hub.agents.tool_agent import ToolAgent
 from agent_hub.config.settings import get_settings
 from agent_hub.core.enums import UserRole
 from agent_hub.core.models import (
@@ -27,9 +31,6 @@ from agent_hub.core.models import (
     UserContext,
 )
 from agent_hub.core.router import DecisionRouter
-from agent_hub.agents.llm_agent import LLMAgent
-from agent_hub.agents.tool_agent import ToolAgent
-from agent_hub.agents.registry import ToolRegistry
 from agent_hub.memory import MemoryManager
 
 

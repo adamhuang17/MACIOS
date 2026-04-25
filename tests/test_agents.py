@@ -23,9 +23,8 @@ from agent_hub.agents.registry import (
 )
 from agent_hub.agents.retrieval_agent import RetrievalAgent
 from agent_hub.agents.tool_agent import ToolAgent
-from agent_hub.core.models import AgentResult, MemoryEntry, ReActStep, ReActTrace, SubTask
+from agent_hub.core.models import MemoryEntry, SubTask
 from agent_hub.memory import MemoryManager
-
 
 # ── Fixtures ─────────────────────────────────────────
 

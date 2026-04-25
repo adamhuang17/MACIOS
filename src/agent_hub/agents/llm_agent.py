@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import AsyncGenerator, Iterator
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -330,10 +331,13 @@ class LLMAgent(BaseAgent):
             total_steps=len(steps),
         )
         best_output = self._extract_best_intermediate(steps)
+        max_rounds_note = (
+            f"⚠️ 已达最大推理轮次（{self._max_react_rounds}），以上为中间结果。"
+        )
         return AgentResult(
             agent_name=self.name,
             success=True,
-            output=f"{best_output}\n\n⚠️ 已达最大推理轮次（{self._max_react_rounds}），以上为中间结果。",
+            output=f"{best_output}\n\n{max_rounds_note}",
             duration_ms=0,
             trace_id=subtask.subtask_id,
             react_trace=ReActTrace(
@@ -359,24 +363,33 @@ class LLMAgent(BaseAgent):
             return None
 
         # 兼容中英文、全半角冒号
-        _SEP = r"[\s:：]+"
+        sep_pattern = r"[\s:：]+"
+        thought_pattern = (
+            rf"(?:Thought|思考){sep_pattern}(.+?)"
+            rf"(?=\n(?:Action|操作|Final Answer|最终答案|FinalAnswer){sep_pattern}|$)"
+        )
 
         # 尝试提取 Thought（兼容 "思考" / "Thought"）
         thought_match = re.search(
-            rf"(?:Thought|思考){_SEP}(.+?)(?=\n(?:Action|操作|Final Answer|最终答案|FinalAnswer)[\s:：]|$)",
+            thought_pattern,
             text,
             re.DOTALL | re.IGNORECASE,
         )
         if not thought_match:
             # 宽容模式：把整段非 Action/Final 文本当作 thought
-            thought_match = re.search(r"^(.+?)(?=\n(?:Action|Final)[\s:：]|$)", text.strip(), re.DOTALL | re.IGNORECASE)
+            fallback_thought_pattern = r"^(.+?)(?=\n(?:Action|Final)[\s:：]|$)"
+            thought_match = re.search(
+                fallback_thought_pattern,
+                text.strip(),
+                re.DOTALL | re.IGNORECASE,
+            )
             if not thought_match:
                 return None
         thought = thought_match.group(1).strip()
 
         # 检查 Final Answer（兼容 "最终答案" / "Final Answer" / "FinalAnswer"）
         final_match = re.search(
-            rf"(?:Final\s*Answer|最终答案|FinalAnswer){_SEP}(.+)",
+            rf"(?:Final\s*Answer|最终答案|FinalAnswer){sep_pattern}(.+)",
             text,
             re.DOTALL | re.IGNORECASE,
         )
@@ -388,7 +401,7 @@ class LLMAgent(BaseAgent):
 
         # 检查 Action + Action Input（兼容 "操作" / "Action"）
         action_match = re.search(
-            rf"(?:Action|操作){_SEP}(.+?)(?:\n|$)",
+            rf"(?:Action|操作){sep_pattern}(.+?)(?:\n|$)",
             text,
             re.IGNORECASE,
         )
@@ -397,7 +410,7 @@ class LLMAgent(BaseAgent):
         action = action_match.group(1).strip()
 
         input_match = re.search(
-            rf"(?:Action\s*Input|操作输入|ActionInput|参数){_SEP}(.+?)(?:\n|$)",
+            rf"(?:Action\s*Input|操作输入|ActionInput|参数){sep_pattern}(.+?)(?:\n|$)",
             text,
             re.DOTALL | re.IGNORECASE,
         )
@@ -415,9 +428,7 @@ class LLMAgent(BaseAgent):
         if not output or not output.strip():
             return False
         # 过短的输出视为不完整
-        if len(output.strip()) < 2:
-            return False
-        return True
+        return len(output.strip()) >= 2
 
     # ── 工具执行 ─────────────────────────────────────
 
@@ -566,7 +577,7 @@ class LLMAgent(BaseAgent):
 
     # ── 流式调用 ─────────────────────────────────────
 
-    def _call_primary_stream(self, prompt: str):
+    def _call_primary_stream(self, prompt: str) -> Iterator[str]:
         """流式调用主 LLM，返回 token 生成器。
 
         Yields:
@@ -583,7 +594,7 @@ class LLMAgent(BaseAgent):
 
     async def run_stream(
         self, subtask: SubTask, session_id: str, user_id: str,
-    ):
+    ) -> AsyncGenerator[dict[str, str], None]:
         """流式执行 LLM 生成，逐 token yield。
 
         Yields:

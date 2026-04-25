@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -34,7 +34,6 @@ from agent_hub.pilot import (
     validate_plan_graph,
 )
 
-
 # ── 模型默认值 / UTC 时间 ─────────────────────────────
 
 
@@ -55,7 +54,7 @@ def test_workspace_defaults_utc() -> None:
     assert ws.status is WorkspaceStatus.ACTIVE
     assert ws.version == 1
     assert ws.created_at.tzinfo is not None
-    assert ws.created_at.utcoffset() == timezone.utc.utcoffset(datetime.now())
+    assert ws.created_at.utcoffset() == UTC.utcoffset(datetime.now())
 
 
 def test_pilot_model_is_frozen() -> None:
@@ -136,7 +135,7 @@ def test_approval_decide() -> None:
         workspace_id="ws", task_id="t",
         target_type=ApprovalTargetType.PLAN, target_id="p", requester_id="u1",
     )
-    a = transition(a, ApprovalAction.APPROVE, patch={"decided_at": datetime.now(timezone.utc)})
+    a = transition(a, ApprovalAction.APPROVE, patch={"decided_at": datetime.now(UTC)})
     assert a.status is ApprovalStatus.APPROVED
     assert a.decided_at is not None
 

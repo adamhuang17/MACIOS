@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent_hub.core.cache import CacheHit, CacheLayer, CacheStats
+from agent_hub.core.cache import CacheLayer, CacheStats
 
 
 class TestCacheStats:

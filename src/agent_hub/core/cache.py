@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 if TYPE_CHECKING:
+    from redis.asyncio.client import Redis
+
     from agent_hub.rag.embedder import Embedder
 
 logger = structlog.get_logger(__name__)
@@ -69,16 +71,18 @@ class CacheLayer:
         self._stats = CacheStats()
 
         # 懒加载 Redis 连接
-        self._redis = None
+        self._redis: Redis | None = None
         self._redis_url = redis_url
 
-    async def _get_redis(self):
+    async def _get_redis(self) -> Redis:
         """懒加载 Redis 异步连接。"""
         if self._redis is None:
             import redis.asyncio as aioredis
+
             self._redis = aioredis.from_url(
                 self._redis_url, decode_responses=True,
             )
+        assert self._redis is not None
         return self._redis
 
     @property
@@ -250,7 +254,7 @@ class CacheLayer:
         """计算余弦相似度。"""
         if len(a) != len(b):
             return 0.0
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
         norm_a = sum(x * x for x in a) ** 0.5
         norm_b = sum(x * x for x in b) ** 0.5
         if norm_a == 0 or norm_b == 0:

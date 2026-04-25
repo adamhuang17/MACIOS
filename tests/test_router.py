@@ -10,7 +10,6 @@ mock 掉 LLM 调用（_call_llm），单独测试路由逻辑：
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -18,7 +17,6 @@ import pytest
 from agent_hub.core.enums import ExecutionMode, UserRole
 from agent_hub.core.models import RoutingDecision, SubTask, UserContext
 from agent_hub.core.router import DecisionRouter
-
 
 # ── Fixtures ─────────────────────────────────────────
 

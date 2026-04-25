@@ -10,7 +10,8 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING, TypeAlias
 
 import structlog
 
@@ -20,8 +21,11 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+JSONScalar: TypeAlias = str | int | float | bool | None
+JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
 
-def _sse_event(event_type: str, content: Any, **extra: Any) -> str:
+
+def _sse_event(event_type: str, content: JSONValue, **extra: JSONValue) -> str:
     """构造 SSE data 行。"""
     payload = {"type": event_type, "content": content, **extra}
     return json.dumps(payload, ensure_ascii=False)

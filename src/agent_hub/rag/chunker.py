@@ -118,7 +118,7 @@ class DocumentChunker:
         doc = fitz.open(pdf_path)
         all_text_parts: list[str] = []
 
-        for page_num, page in enumerate(doc, start=1):
+        for _page_num, page in enumerate(doc, start=1):
             page_text = page.get_text("text")
             if page_text.strip():
                 all_text_parts.append(page_text)

@@ -25,7 +25,6 @@ if str(_SRC) not in sys.path:
 
 from agent_hub.core.cache import CacheLayer, CacheStats
 
-
 # ── 测试 query 池 ──────────────────────────────────────
 
 _QUERY_POOL = [
@@ -82,7 +81,7 @@ async def bench_cache_l1() -> None:
     avg = statistics.mean(latencies)
 
     print("\n" + "=" * 60)
-    print(f"L1 精确匹配延迟（mock Redis, 500 次）")
+    print("L1 精确匹配延迟（mock Redis, 500 次）")
     print("=" * 60)
     print(f"  平均延迟: {avg:.1f} μs ({avg/1000:.3f} ms)")
     print(f"  P50:      {p50:.1f} μs ({p50/1000:.3f} ms)")
@@ -150,7 +149,7 @@ async def bench_cache_l2() -> None:
     avg = statistics.mean(latencies)
 
     print("\n" + "=" * 60)
-    print(f"L2 语义匹配延迟（mock Redis + mock Embedder, 200 次）")
+    print("L2 语义匹配延迟（mock Redis + mock Embedder, 200 次）")
     print("=" * 60)
     print(f"  平均延迟: {avg:.1f} μs ({avg/1000:.3f} ms)")
     print(f"  P50:      {p50:.1f} μs ({p50/1000:.3f} ms)")
@@ -181,7 +180,7 @@ def bench_cache_stats() -> None:
     print(f"  L2 命中: {stats.l2_hits} ({stats.l2_hits/n_requests:.1%})")
     print(f"  未命中:  {stats.misses} ({stats.misses/n_requests:.1%})")
     print(f"  总命中率: {stats.hit_rate:.1%}")
-    print(f"  ⚠ 注意: 这是模拟数据，实际命中率需在真实环境下测量")
+    print("  ⚠ 注意: 这是模拟数据，实际命中率需在真实环境下测量")
 
 
 async def main() -> None:

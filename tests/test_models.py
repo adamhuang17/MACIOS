@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
 
 import pytest
@@ -20,7 +19,6 @@ from agent_hub.core import (
     UserContext,
     UserRole,
 )
-
 
 # ── 枚举测试 ─────────────────────────────────────────
 

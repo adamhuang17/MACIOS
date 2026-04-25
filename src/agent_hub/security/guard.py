@@ -24,16 +24,35 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Protocol, cast
 
 import structlog
 from openai import AsyncOpenAI
-from pydantic import BaseModel, Field
 
 from agent_hub.config.settings import Settings, get_settings
 from agent_hub.core.models import GuardResult
 
 logger = structlog.get_logger(__name__)
+
+
+class _ToolCallFunction(Protocol):
+    arguments: str
+
+
+class _ToolCall(Protocol):
+    function: _ToolCallFunction
+
+
+class _ToolCallMessage(Protocol):
+    tool_calls: list[_ToolCall] | None
+
+
+class _ToolCallChoice(Protocol):
+    message: _ToolCallMessage
+
+
+class _ToolCallResponse(Protocol):
+    choices: list[_ToolCallChoice]
 
 
 # ── 规则引擎 ─────────────────────────────────────────
@@ -294,12 +313,12 @@ class LLMGuard:
             )
 
     @staticmethod
-    def _parse_response(response: Any) -> dict[str, Any]:
+    def _parse_response(response: _ToolCallResponse) -> dict[str, object]:
         """从 OpenAI 响应中提取 function call 结果。"""
         message = response.choices[0].message
         if not message.tool_calls:
             raise ValueError("LLM 响应中未找到 tool_calls")
-        return json.loads(message.tool_calls[0].function.arguments)
+        return cast(dict[str, object], json.loads(message.tool_calls[0].function.arguments))
 
 
 # ── 双层守卫编排 ─────────────────────────────────────

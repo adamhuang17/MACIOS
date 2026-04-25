@@ -6,7 +6,7 @@ DocumentChunker、RAGPipeline 端到端。
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,7 +15,6 @@ from agent_hub.rag.embedder import Embedder
 from agent_hub.rag.hybrid_ranker import rrf_merge
 from agent_hub.rag.sparse_retriever import SparseRetriever
 from agent_hub.rag.vector_store import ChunkDoc, SearchResult, VectorStore
-
 
 # ═══════════════════════════════════════════════════════
 # Embedder 测试

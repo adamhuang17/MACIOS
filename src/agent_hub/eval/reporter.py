@@ -21,26 +21,26 @@ class EvalReporter:
         """生成 Markdown 格式报告。"""
         lines = [
             f"# {title}",
-            f"",
+            "",
             f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             f"**评测样本数**: {result.num_queries}",
-            f"",
-            f"## 汇总指标",
-            f"",
-            f"| 指标 | 值 |",
-            f"|------|------|",
+            "",
+            "## 汇总指标",
+            "",
+            "| 指标 | 值 |",
+            "|------|------|",
             f"| Precision@K | {result.avg_precision_at_k:.4f} |",
             f"| Recall@K | {result.avg_recall_at_k:.4f} |",
             f"| MRR | {result.mrr:.4f} |",
-            f"",
+            "",
         ]
 
         if result.per_query:
             lines.extend([
-                f"## 逐条详情",
-                f"",
-                f"| # | 问题 | P@K | R@K | RR |",
-                f"|---|------|-----|-----|----|",
+                "## 逐条详情",
+                "",
+                "| # | 问题 | P@K | R@K | RR |",
+                "|---|------|-----|-----|----|",
             ])
             for i, r in enumerate(result.per_query, start=1):
                 q = r.question[:30] + "..." if len(r.question) > 30 else r.question

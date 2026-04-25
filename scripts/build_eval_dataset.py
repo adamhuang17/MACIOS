@@ -235,9 +235,8 @@ def build_dataset() -> None:
 
 async def ingest() -> None:
     """入库测试文档。"""
-    from agent_hub.rag.pipeline import RAGPipeline
-
     from agent_hub.config.settings import get_settings
+    from agent_hub.rag.pipeline import RAGPipeline
 
     settings = get_settings()
     rag = RAGPipeline(settings=settings)
@@ -262,12 +261,11 @@ async def ingest() -> None:
 
 async def evaluate() -> None:
     """运行评测。"""
-    from agent_hub.eval.dataset import EvalDataset, QAPair
+    from agent_hub.config.settings import get_settings
+    from agent_hub.eval.dataset import EvalDataset
     from agent_hub.eval.evaluator import RAGEvaluator
     from agent_hub.eval.reporter import EvalReporter
     from agent_hub.rag.pipeline import RAGPipeline
-
-    from agent_hub.config.settings import get_settings
 
     settings = get_settings()
     rag = RAGPipeline(settings=settings)

@@ -77,3 +77,8 @@ line-length = 99
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "ANN"]
 ignore = ["ANN101", "ANN102"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*.py" = ["ANN", "E402", "E501", "F841"]
+"src/agent_hub/pilot/events/store.py" = ["ANN401"]
+"tests/**/*.py" = ["ANN", "B017", "E501", "F841", "N806"]

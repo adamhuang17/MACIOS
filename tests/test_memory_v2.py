@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -17,7 +16,6 @@ from agent_hub.memory import MemoryManager
 from agent_hub.memory.conflict_detector import ConflictDetector, MemoryOp
 from agent_hub.memory.memory_ops import MemoryOperator
 from agent_hub.memory.persistent import PersistentMemory
-
 
 # ═══════════════════════════════════════════════════════
 # MemoryEntry 新字段测试

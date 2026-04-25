@@ -29,7 +29,7 @@ Example::
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol, cast
 
 import httpx
 import structlog
@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from agent_hub.config.settings import Settings, get_settings
-from agent_hub.core.enums import ExecutionMode, UserRole
+from agent_hub.core.enums import ExecutionMode
 from agent_hub.core.models import RoutingDecision, SubTask, UserContext
 
 logger = structlog.get_logger(__name__)
@@ -74,7 +74,8 @@ _SYSTEM_PROMPT = """\
 ## 子任务拆解规则
 当 mode 为 qa/plan/act/delegate/repair 时，将请求拆解为 1-4 个子任务。每个子任务包含：
 - description: 子任务自然语言描述
-- required_agents: 需要调用的Agent类型列表（llm_agent / retrieval_agent / tool_agent / reflection_agent）
+- required_agents: 需要调用的Agent类型列表
+    （llm_agent / retrieval_agent / tool_agent / reflection_agent）
 - priority: 优先级（1最高）
 - depends_on: 依赖的子任务ID列表（用于DAG编排）
 **重要**：mode=ignore 时 plan 为空列表；其他 mode 必须至少生成一个子任务。
@@ -89,10 +90,16 @@ _SYSTEM_PROMPT = """\
 
 class _LLMSubTask(BaseModel):
     """LLM 输出的子任务结构。"""
+
     description: str = Field(description="子任务自然语言描述")
-    required_agents: list[str] = Field(description='需要调用的Agent类型名称列表，如 ["llm_agent", "retrieval_agent"]')
+    required_agents: list[str] = Field(
+        description='需要调用的Agent类型名称列表，如 ["llm_agent", "retrieval_agent"]',
+    )
     priority: int = Field(default=1, description="优先级，1为最高")
-    depends_on: list[str] = Field(default_factory=list,description='依赖的子任务ID列表，如 ["subtask_1"]')
+    depends_on: list[str] = Field(
+        default_factory=list,
+        description='依赖的子任务ID列表，如 ["subtask_1"]',
+    )
 
 
 class _LLMRoutingOutput(BaseModel):
@@ -129,6 +136,29 @@ class _LLMRoutingOutput(BaseModel):
         default_factory=list,
         description="拆解出的子任务列表，mode=ignore 时为空列表",
     )
+
+
+# ── OpenAI 响应协议（最小字段） ───────────────────────
+
+
+class _ToolCallFunction(Protocol):
+    arguments: str
+
+
+class _ToolCall(Protocol):
+    function: _ToolCallFunction
+
+
+class _ToolCallMessage(Protocol):
+    tool_calls: list[_ToolCall] | None
+
+
+class _ToolCallChoice(Protocol):
+    message: _ToolCallMessage
+
+
+class _ToolCallResponse(Protocol):
+    choices: list[_ToolCallChoice]
 
 
 # ── 构造 OpenAI function calling tool 定义 ───────────
@@ -288,7 +318,7 @@ class DecisionRouter:
         return result
 
     @staticmethod
-    def _extract_tool_input(response: Any) -> dict[str, Any]:
+    def _extract_tool_input(response: _ToolCallResponse) -> dict[str, object]:
         """从 OpenAI 兼容响应中提取 function call 的 arguments。"""
         import json
 
@@ -296,7 +326,7 @@ class DecisionRouter:
         if not message.tool_calls:
             msg = "LLM 响应中未找到 tool_calls"
             raise ValueError(msg)
-        return json.loads(message.tool_calls[0].function.arguments)
+        return cast(dict[str, object], json.loads(message.tool_calls[0].function.arguments))
 
     @staticmethod
     def _to_routing_decision(llm_output: _LLMRoutingOutput) -> RoutingDecision:

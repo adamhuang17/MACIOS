@@ -16,7 +16,6 @@ from agent_hub.core.models import RoutingDecision, SubTask
 from agent_hub.core.pipeline import AgentPipeline
 from agent_hub.core.router import _SYSTEM_PROMPT
 
-
 # ── 直接测试 _ensure_default_subtask ──────────────────
 
 

@@ -7,7 +7,7 @@ class PilotDomainError(Exception):
     """Pilot 领域基础异常。"""
 
 
-class IllegalTransition(PilotDomainError):
+class IllegalTransition(PilotDomainError):  # noqa: N818
     """状态机拒绝的非法迁移。"""
 
     def __init__(
@@ -31,7 +31,7 @@ class PlanGraphError(PilotDomainError):
     """Plan DAG 校验失败。"""
 
 
-class ConcurrencyConflict(PilotDomainError):
+class ConcurrencyConflict(PilotDomainError):  # noqa: N818
     """乐观并发版本冲突。"""
 
     def __init__(

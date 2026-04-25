@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 
     from agent_hub.memory import MemoryManager
     from agent_hub.rag.pipeline import RAGPipeline
-    from agent_hub.rag.vector_store import SearchResult
 
 logger = structlog.get_logger(__name__)
 

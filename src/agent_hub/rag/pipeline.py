@@ -13,7 +13,7 @@ from agent_hub.rag.chunker import DocumentChunker
 from agent_hub.rag.embedder import Embedder
 from agent_hub.rag.hybrid_ranker import rrf_merge
 from agent_hub.rag.sparse_retriever import SparseRetriever
-from agent_hub.rag.vector_store import ChunkDoc, SearchResult, VectorStore
+from agent_hub.rag.vector_store import SearchResult, VectorStore
 
 if TYPE_CHECKING:
     from agent_hub.config.settings import Settings
