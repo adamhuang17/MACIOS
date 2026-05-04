@@ -24,8 +24,8 @@ Agent-Hub 可以分成两个层次理解：
 | Agent-Hub 核心引擎 | 已实现 | 多 Agent 编排、路由、工具调用、记忆、安全、API 已落地 |
 | FastAPI + SSE | 已实现 | 提供 `/chat`、`/chat/stream`、`/health`、`/tools`、`/trace/{trace_id}` |
 | RAG 与评测 | 已实现 | 混合检索、评测脚本与测试用例已在仓库中 |
-| Pilot 领域模型与事件底座 | 已实现基础 | `src/agent_hub/pilot/` 当前只有 `domain/` 与 `events/` |
-| 飞书连接器、审批流、Brief/PPT 产物链路 | 规划中 | README 保留方向说明，但不再描述为现状 |
+| Pilot M0-M2 基础闭环 | 已实现基础 | 领域模型、事件存储、编排骨架、Skill Registry、Pilot API 与最小 Dashboard 已落地 |
+| 飞书连接器、Brief/PPT 产物链路 | 规划中 | 飞书真实接入、文档生成、PPTX 渲染和分享链路仍属于后续模块 |
 
 ## 已实现能力
 
@@ -48,7 +48,7 @@ Agent-Hub 可以分成两个层次理解：
 - 主编排仍然是自研 DAG + `asyncio.gather`，不是 LangGraph 驱动全系统。
 - LangGraph 目前主要用于 `reflection_agent` 内部的检索、评估与重写子流程。
 - `connectors/` 仍是占位目录，钉钉、QQ、OpenClaw 等外部接入尚未真正落地。
-- `pilot/` 目前只落地了领域模型与事件底座，还没有 `services/`、`skills/`、飞书适配层或独立 Pilot API。
+- `pilot/` 已有领域模型、事件底座、编排服务、技能注册抽象和 FakeSkills；飞书适配层、Brief/PPT 真实产物链路仍未落地。
 - 仓库内存在若干基础设施模块，但并非全部已经贯穿主 Pipeline，例如缓存、限流、向量记忆接入点仍需进一步整合。
 
 ## 架构概览
@@ -99,7 +99,14 @@ REDIS_URL=redis://localhost:6379/0
 OBSIDIAN_VAULT_PATH=./data/obsidian
 
 RAG_API_BASE=http://localhost:8000
-CORS_ORIGINS=http://localhost:3000
+CORS_ORIGINS=http://localhost:8080,http://localhost:3000
+
+PUBLIC_BASE_URL=http://localhost:8080
+DASHBOARD_STATIC_DIR=web
+PILOT_ENABLED=true
+PILOT_DEMO_MODE=true
+PILOT_STORE_PATH=./data/pilot.sqlite3
+PILOT_ADMIN_TOKEN=change-me
 
 GUARD_ENABLED=true
 GUARD_LLM_ENABLED=true
@@ -108,6 +115,9 @@ GUARD_LLM_ENABLED=true
 说明：
 
 - `PG_DSN`、`REDIS_URL`、`OBSIDIAN_VAULT_PATH` 是本地可运行所需的关键配置。
+- `PUBLIC_BASE_URL` 是对外展示入口；本机演示可用 `http://localhost:8080`，局域网演示改成 `http://<部署机IP>:8080`，飞书回调阶段应换成 HTTPS 公网域名。
+- `DASHBOARD_STATIC_DIR` 默认指向 `web`；当前保底方案由 FastAPI 同源挂载到 `/dashboard/`，不需要单独前端服务器。
+- `PILOT_STORE_PATH` 配置后使用 SQLite 保存 Pilot 事件和快照；为空时使用进程内内存存储，重启后数据会丢失。
 - `dingtalk_*`、`qq_*`、`openclaw_*` 等配置项虽然已经出现在 `Settings` 中，但对应连接器暂未完成，不建议写进最小启动配置。
 
 ### 3. 启动依赖服务
@@ -129,6 +139,25 @@ docker compose up -d --build
 ```bash
 uvicorn agent_hub.api.routes:app --reload --port 8080
 ```
+
+### 5. 打开 Pilot Dashboard
+
+M2 的 Dashboard 采用同源保底部署：后端启动后访问：
+
+```text
+http://localhost:8080/dashboard/
+```
+
+局域网演示时，把 `.env` 中的 `PUBLIC_BASE_URL` 改成部署机 IP，例如：
+
+```env
+PUBLIC_BASE_URL=http://192.168.1.23:8080
+CORS_ORIGINS=http://192.168.1.23:8080
+```
+
+容器模式下，`Dockerfile` 会把 `web/` 复制进镜像，`docker-compose.yml` 默认将 Dashboard 静态目录设为 `/app/web`，访问路径仍是 `/dashboard/`。
+
+Dashboard 是 Agent-Pilot 的状态面板和审批兜底入口：任务列表、步骤状态、审批按钮、工件列表和 SSE 事件流都在这里展示。正式飞书比赛展示时，飞书 IM/卡片是主交互入口；Dashboard 用来让评委看到 Agent 内部计划、执行轨迹、审批状态和失败恢复能力。
 
 ## API 示例
 

@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     # ── CORS（逗号分隔） ──────────────────────────────
     cors_origins: str = "http://localhost:3000"
 
+    # ── HTTP 部署出口 ─────────────────────────────────
+    # 为空时 API 响应继续返回相对路径；配置后用于飞书卡片、群消息、
+    # 演示链接等需要外部访问的 URL。
+    public_base_url: str = ""
+    # Dashboard 静态目录。相对路径会按当前工作目录和项目根目录兜底解析。
+    dashboard_static_dir: str = "web"
+
     # ── ReAct 推理循环 ────────────────────────────────
     react_max_rounds: int = 5
 
@@ -104,10 +111,66 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     cache_ttl: int = 300
     semantic_cache_threshold: float = 0.95
+    # 是否在主 Pipeline 中启用三级缓存（需要 Redis 在线）。
+    cache_enabled: bool = False
 
     # ── LLM 并发控制 ─────────────────────────────────
     llm_max_concurrent: int = 5
     llm_call_timeout: int = 30
+    # 是否构造全局 RateLimiter 实例（暂仅注入到 Pipeline，未强制 wrap LLM 调用）。
+    rate_limiter_enabled: bool = False
+    # 是否在 Pipeline 启动时自动注入 VectorMemory + ConflictDetector。
+    vector_memory_enabled: bool = False
+
+    # ── Pilot M2 ─────────────────────────────────────
+    pilot_enabled: bool = True
+    # 空字符串表示使用 InMemoryEventStore；否则作为 SQLite 文件路径。
+    pilot_store_path: str = ""
+    # demo 模式：启动时自动注册 fake skills，方便 Web Dashboard 离线试跑。
+    pilot_demo_mode: bool = True
+    # 为 ExecutionEngine 提供默认 auto-approve 策略；M2 默认关闭以暴露真实状态流。
+    pilot_auto_approve_writes: bool = False
+    # SSE 端点单次回放的最大事件数。
+    pilot_event_backfill_limit: int = 500
+    # admin-only recovery 路由的简单 header gate；为空表示禁用。
+    pilot_admin_token: str = ""
+    # M3 Artifact 内容落盘根目录；空字符串表示用内存兜底（仅推荐测试使用）。
+    pilot_artifact_dir: str = "data/pilot/artifacts"
+    # 启用真实 ModelGateway（OpenAI 兼容）；为 False 时仍走 FakeModelGateway。
+    pilot_use_real_gateway: bool = False
+    # 启用真实产物链（SlideSpec / PPTX / Drive）；False 时仍走 fake skills。
+    pilot_use_real_chain: bool = False
+
+    # ── M4 飞书 IM ───────────────────────────────────
+    # 启用真实飞书入口（webhook + skills）；为 False 时只用 fake skills。
+    feishu_enabled: bool = False
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    # 自建应用 / 应用商店应用；目前只校验存在，不区分鉴权差异。
+    feishu_app_type: str = "self_built"
+    # 事件订阅校验：URL verification 用 verification_token；
+    # 加密事件需要 encrypt_key（AES-256，留空表示不解密）。
+    feishu_verification_token: str = ""
+    feishu_encrypt_key: str = ""
+    # 开放平台 API base，可指向飞书国际版 / lark.com。
+    feishu_api_base_url: str = "https://open.feishu.cn"
+    feishu_request_timeout_ms: int = 12_000
+    # webhook event_id LRU 去重 TTL（秒）。
+    feishu_webhook_dedup_ttl_seconds: int = 600
+    feishu_webhook_dedup_max_entries: int = 4_096
+    # Drive 默认上传目录 token；留空表示根目录。
+    feishu_default_folder_token: str = ""
+    # 机器人 open_id，用于 mention 过滤；留空表示不强制要求 @bot。
+    feishu_bot_open_id: str = ""
+    # 触发任务的关键字（逗号分隔）；非空时只在文本包含任一关键字时建任务。
+    feishu_trigger_keywords: str = ""
+    # 是否需要 mention 机器人才触发（仅群聊生效）。
+    feishu_require_mention_in_group: bool = True
+    # webhook 路由路径（挂在主 app 下）。
+    feishu_callback_path: str = "/api/feishu/webhook"
+    # 长连接模式（无公网地址时使用）：True 时主动连接飞书 WebSocket 服务器，
+    # 不再依赖外部 webhook 推送；False 时保持原 HTTP webhook 模式。
+    feishu_use_long_conn: bool = False
 
     # ── 文件路径 & 安全 ──────────────────────────────
     vm_shared_dir: str = "/mnt/shared"
@@ -121,6 +184,32 @@ class Settings(BaseSettings):
     def allowed_extensions_set(self) -> set[str]:
         """将逗号分隔的扩展名字符串解析为集合。"""
         return {ext.strip() for ext in self.allowed_file_extensions.split(",") if ext.strip()}
+
+    def public_url(self, path: str) -> str:
+        """把站内路径转换为可对外展示的 URL。
+
+        ``PUBLIC_BASE_URL`` 未配置时保留相对路径，方便本地测试与同源
+        Dashboard；配置后返回绝对 URL，供飞书消息、卡片和演示链接使用。
+        """
+        normalized_path = path if path.startswith("/") else f"/{path}"
+        base_url = self.public_base_url.strip().rstrip("/")
+        if not base_url:
+            return normalized_path
+        return f"{base_url}{normalized_path}"
+
+    @property
+    def dashboard_url(self) -> str:
+        """Dashboard 的对外访问地址。"""
+        return self.public_url("/dashboard/")
+
+    @property
+    def feishu_trigger_keyword_set(self) -> set[str]:
+        """逗号分隔关键字 → 去空白集合。空集合表示不按关键字过滤。"""
+        return {
+            kw.strip()
+            for kw in self.feishu_trigger_keywords.split(",")
+            if kw.strip()
+        }
 
 
 @lru_cache(maxsize=1)

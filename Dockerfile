@@ -10,11 +10,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Python deps
 COPY pyproject.toml README.md ./
 COPY src/ src/
+COPY web/ web/
 RUN pip install --no-cache-dir -e .
 
 # Default env
 ENV OBSIDIAN_VAULT_PATH=/app/data/obsidian
 ENV CORS_ORIGINS=*
+ENV DASHBOARD_STATIC_DIR=/app/web
 
 EXPOSE 8080
 

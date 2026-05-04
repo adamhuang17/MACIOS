@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -99,6 +99,7 @@ class LLMAgent(BaseAgent):
 
         self._memory_manager: MemoryManager | None = None
         self._registry: ToolRegistry | None = None
+        self._user_role: str = "user"
 
     def inject_memory(self, memory_manager: MemoryManager) -> None:
         """注入记忆管理器（Pipeline 在初始化时调用）。"""
@@ -107,6 +108,14 @@ class LLMAgent(BaseAgent):
     def inject_registry(self, registry: ToolRegistry) -> None:
         """注入工具注册表，启用 ReAct 推理循环。"""
         self._registry = registry
+
+    def set_user_role(self, role: str) -> None:
+        """设置当前用户角色（Pipeline 在调用前设置）。
+
+        ReAct 循环调用工具时会根据该角色进行 admin 权限过滤，
+        与 :class:`ToolAgent.set_user_role` 保持语义一致。
+        """
+        self._user_role = role
 
     # ── 主入口 ───────────────────────────────────────
 
@@ -331,13 +340,13 @@ class LLMAgent(BaseAgent):
             total_steps=len(steps),
         )
         best_output = self._extract_best_intermediate(steps)
-        max_rounds_note = (
+        max_rounds_notice = (
             f"⚠️ 已达最大推理轮次（{self._max_react_rounds}），以上为中间结果。"
         )
         return AgentResult(
             agent_name=self.name,
             success=True,
-            output=f"{best_output}\n\n{max_rounds_note}",
+            output=f"{best_output}\n\n{max_rounds_notice}",
             duration_ms=0,
             trace_id=subtask.subtask_id,
             react_trace=ReActTrace(
@@ -363,23 +372,21 @@ class LLMAgent(BaseAgent):
             return None
 
         # 兼容中英文、全半角冒号
-        sep_pattern = r"[\s:：]+"
-        thought_pattern = (
-            rf"(?:Thought|思考){sep_pattern}(.+?)"
-            rf"(?=\n(?:Action|操作|Final Answer|最终答案|FinalAnswer){sep_pattern}|$)"
-        )
+        sep = r"[\s:：]+"
 
         # 尝试提取 Thought（兼容 "思考" / "Thought"）
+        thought_boundary = (
+            r"(?=\n(?:Action|操作|Final Answer|最终答案|FinalAnswer)[\s:：]|$)"
+        )
         thought_match = re.search(
-            thought_pattern,
+            rf"(?:Thought|思考){sep}(.+?){thought_boundary}",
             text,
             re.DOTALL | re.IGNORECASE,
         )
         if not thought_match:
             # 宽容模式：把整段非 Action/Final 文本当作 thought
-            fallback_thought_pattern = r"^(.+?)(?=\n(?:Action|Final)[\s:：]|$)"
             thought_match = re.search(
-                fallback_thought_pattern,
+                r"^(.+?)(?=\n(?:Action|Final)[\s:：]|$)",
                 text.strip(),
                 re.DOTALL | re.IGNORECASE,
             )
@@ -389,7 +396,7 @@ class LLMAgent(BaseAgent):
 
         # 检查 Final Answer（兼容 "最终答案" / "Final Answer" / "FinalAnswer"）
         final_match = re.search(
-            rf"(?:Final\s*Answer|最终答案|FinalAnswer){sep_pattern}(.+)",
+            rf"(?:Final\s*Answer|最终答案|FinalAnswer){sep}(.+)",
             text,
             re.DOTALL | re.IGNORECASE,
         )
@@ -401,7 +408,7 @@ class LLMAgent(BaseAgent):
 
         # 检查 Action + Action Input（兼容 "操作" / "Action"）
         action_match = re.search(
-            rf"(?:Action|操作){sep_pattern}(.+?)(?:\n|$)",
+            rf"(?:Action|操作){sep}(.+?)(?:\n|$)",
             text,
             re.IGNORECASE,
         )
@@ -410,7 +417,7 @@ class LLMAgent(BaseAgent):
         action = action_match.group(1).strip()
 
         input_match = re.search(
-            rf"(?:Action\s*Input|操作输入|ActionInput|参数){sep_pattern}(.+?)(?:\n|$)",
+            rf"(?:Action\s*Input|操作输入|ActionInput|参数){sep}(.+?)(?:\n|$)",
             text,
             re.DOTALL | re.IGNORECASE,
         )
@@ -433,13 +440,25 @@ class LLMAgent(BaseAgent):
     # ── 工具执行 ─────────────────────────────────────
 
     async def _execute_tool(self, tool_name: str, action_input: str) -> str:
-        """通过 ToolRegistry 执行工具调用。"""
+        """通过 ToolRegistry 执行工具调用（含 admin 权限过滤）。"""
         assert self._registry is not None  # noqa: S101
 
         tool = self._registry.get(tool_name)
         if not tool:
             available = [t.name for t in self._registry.list_tools()]
             return f"错误：工具 '{tool_name}' 不存在。可用工具: {available}"
+
+        # admin 权限检查（与 ToolAgent._check_permission 语义一致）
+        if tool.spec.requires_admin and self._user_role != "admin":
+            logger.warning(
+                "react_tool_permission_denied",
+                tool=tool_name,
+                role=self._user_role,
+            )
+            return (
+                f"错误：工具 '{tool_name}' 需要管理员权限，"
+                f"当前角色 '{self._user_role}' 无权调用。"
+            )
 
         # 构造参数：简单值 → {"value": ...}，key=value → 解析
         params = self._parse_action_input(action_input, tool_name)
@@ -594,7 +613,7 @@ class LLMAgent(BaseAgent):
 
     async def run_stream(
         self, subtask: SubTask, session_id: str, user_id: str,
-    ) -> AsyncGenerator[dict[str, str], None]:
+    ) -> AsyncIterator[dict[str, str]]:
         """流式执行 LLM 生成，逐 token yield。
 
         Yields:

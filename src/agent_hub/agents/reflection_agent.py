@@ -73,8 +73,8 @@ class ReflectionAgent(BaseAgent):
 
     def __init__(
         self,
-        rag_pipeline: RAGPipeline,
-        llm_client: OpenAI,
+        rag_pipeline: RAGPipeline | None = None,
+        llm_client: OpenAI | None = None,
         model: str = "glm-4-flash",
         relevance_threshold: float = 3.0,
     ) -> None:

@@ -1,7 +1,8 @@
 """Agent-Pilot 业务产品层。
 
-M0 阶段只暴露领域模型、状态机、事件契约与事件底座。
-不依赖 LLM、Feishu、FastAPI、`agent_hub.core.AgentPipeline`。
+M0 阶段提供领域模型、状态机、事件契约与事件底座。
+M1 阶段在其上新增服务编排层（services/）与技能层（skills/），
+但仍不依赖 LLM、Feishu、FastAPI、`agent_hub.core.AgentPipeline`。
 """
 
 from __future__ import annotations
@@ -50,6 +51,53 @@ from agent_hub.pilot.events.store import (
     SnapshotStore,
     SQLiteEventStore,
 )
+from agent_hub.pilot.services import (
+    ApprovalService,
+    ArtifactStore,
+    BriefRevisionContext,
+    CommandError,
+    ExecutionEngine,
+    FakeModelGateway,
+    ModelGateway,
+    OpenAIModelGateway,
+    PilotCommandService,
+    PilotEventPublisher,
+    PilotQueryService,
+    PilotRepository,
+    PlanBlueprint,
+    PlanContext,
+    PlanningService,
+    PlanProfile,
+    PlanStepDraft,
+    PlanTemplateError,
+    RunResult,
+    ServiceActor,
+    StepExecution,
+    StepInputResolver,
+    TaskDetail,
+    TaskHandle,
+    TaskOrchestrator,
+    TaskRequest,
+    TaskSummary,
+    TemplatePlanGateway,
+    WorkspaceSummary,
+)
+from agent_hub.pilot.skills import (
+    BRIEF_SECTIONS,
+    ArtifactContentReader,
+    BriefGenerator,
+    DryRunUnsupported,
+    RegisteredSkill,
+    SkillFunc,
+    SkillInvocation,
+    SkillNotFound,
+    SkillRegistry,
+    SkillResult,
+    SkillSpec,
+    TemplateBriefGenerator,
+    register_fake_skills,
+    register_internal_document_skills,
+)
 
 __all__ = [
     # enums
@@ -77,7 +125,8 @@ __all__ = [
     "IllegalTransition",
     "PilotDomainError",
     "PlanGraphError",
-    # models
+    "PlanTemplateError",
+    # domain models / events
     "Approval",
     "Artifact",
     "ExecutionEvent",
@@ -88,11 +137,57 @@ __all__ = [
     # state
     "transition",
     "validate_plan_graph",
-    # events / store
+    # event底座
     "EventBus",
     "EventStore",
     "EventSubscription",
     "InMemoryEventStore",
     "SnapshotStore",
     "SQLiteEventStore",
+    # M1 services
+    "ApprovalService",
+    "ArtifactStore",
+    "ExecutionEngine",
+    "FakeModelGateway",
+    "ModelGateway",
+    "OpenAIModelGateway",
+    "PilotEventPublisher",
+    "PilotRepository",
+    "PlanBlueprint",
+    "PlanContext",
+    "PlanProfile",
+    "PlanStepDraft",
+    "PlanningService",
+    "RunResult",
+    "ServiceActor",
+    "StepExecution",
+    "TaskHandle",
+    "TaskOrchestrator",
+    "TaskRequest",
+    "TemplatePlanGateway",
+    # M2 services
+    "CommandError",
+    "PilotCommandService",
+    "PilotQueryService",
+    "TaskDetail",
+    "TaskSummary",
+    "WorkspaceSummary",
+    # M1 skills
+    "BRIEF_SECTIONS",
+    "ArtifactContentReader",
+    "BriefGenerator",
+    "BriefRevisionContext",
+    "DryRunUnsupported",
+    "RegisteredSkill",
+    "SkillFunc",
+    "SkillInvocation",
+    "SkillNotFound",
+    "SkillRegistry",
+    "SkillResult",
+    "SkillSpec",
+    "StepInputResolver",
+    "TemplateBriefGenerator",
+    "register_fake_skills",
+    "register_internal_document_skills",
 ]
+

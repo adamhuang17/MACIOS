@@ -199,6 +199,16 @@ class SpanContext:
                 self._otel_span.record_exception(exc_val)
             self._otel_span.end()
 
+        # 写入全局 TraceStore（如果已注册）
+        try:
+            from agent_hub.core.trace_store import get_trace_store
+
+            store = get_trace_store()
+            if store is not None:
+                store.record_span(self.to_dict())
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("trace_store_record_failed", error=str(exc))
+
         return False  # 不吞异常
 
     # ── 事件 & 序列化 ────────────────────────────────

@@ -31,7 +31,7 @@ class RetrievalAgent(BaseAgent):
 
     def __init__(
         self,
-        rag_pipeline: RAGPipeline,
+        rag_pipeline: RAGPipeline | None = None,
         top_k: int = 5,
         default_namespace: str | None = None,
     ) -> None:

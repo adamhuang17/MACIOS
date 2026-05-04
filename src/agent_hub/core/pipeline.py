@@ -45,6 +45,7 @@ from agent_hub.core.models import (
     TaskInput,
     TaskOutput,
 )
+from agent_hub.core.rate_limiter import RateLimiter
 from agent_hub.core.router import DecisionRouter
 from agent_hub.core.tracer import SpanContext, get_current_trace_id
 from agent_hub.memory import MemoryManager
@@ -54,6 +55,7 @@ from agent_hub.security.guard import PromptGuard
 if TYPE_CHECKING:
     from agent_hub.config.settings import Settings
     from agent_hub.core.base_agent import BaseAgent
+    from agent_hub.core.cache import CacheLayer
 
 logger = structlog.get_logger(__name__)
 
@@ -125,8 +127,8 @@ class AgentPipeline:
         self._registry = ToolRegistry()
         self._registry.register_defaults()
 
-        # RAG Pipeline
-        self._rag_pipeline = RAGPipeline(settings=settings)
+        # RAG Pipeline（延迟初始化，避免启动时下载嵌入模型）
+        self._rag_pipeline: RAGPipeline | None = None
 
         # Agent 实例
         llm_agent = LLMAgent(
@@ -167,7 +169,77 @@ class AgentPipeline:
                 llm_enabled=settings.guard_llm_enabled,
             )
 
-        logger.info("pipeline_initialized", agents=list(self._agents.keys()))
+        # 三级缓存（feature flag 控制；连接失败时静默降级）
+        self._cache: CacheLayer | None = None
+        if getattr(settings, "cache_enabled", False) is True:
+            try:
+                from agent_hub.core.cache import CacheLayer
+
+                self._cache = CacheLayer(
+                    redis_url=settings.redis_url,
+                    ttl=settings.cache_ttl,
+                    semantic_threshold=settings.semantic_cache_threshold,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("cache_layer_init_failed", error=str(exc))
+
+        # LLM 并发限流（暂作为属性持有，后续在 LLMAgent 调用包裹）
+        self._rate_limiter: RateLimiter | None = None
+        if getattr(settings, "rate_limiter_enabled", False) is True:
+            self._rate_limiter = RateLimiter(
+                max_concurrent=settings.llm_max_concurrent,
+                default_timeout=float(settings.llm_call_timeout),
+            )
+
+        # 向量记忆层（可选；连接失败时静默降级）
+        if getattr(settings, "vector_memory_enabled", False) is True:
+            self._try_inject_vector_memory()
+
+        logger.info(
+            "pipeline_initialized",
+            agents=list(self._agents.keys()),
+            cache_enabled=self._cache is not None,
+            rate_limiter_enabled=self._rate_limiter is not None,
+        )
+
+    # ── 可选基础设施访问器 ──────────────────────────
+
+    @property
+    def cache(self) -> CacheLayer | None:
+        return self._cache
+
+    @property
+    def rate_limiter(self) -> RateLimiter | None:
+        return self._rate_limiter
+
+    def _try_inject_vector_memory(self) -> None:
+        """尝试装配 VectorMemory + ConflictDetector + MemoryOperator。
+
+        任意一步失败都静默降级，pipeline 继续以 session+persistent 两层运行。
+        """
+        try:
+            from agent_hub.memory.conflict_detector import ConflictDetector
+            from agent_hub.memory.memory_ops import MemoryOperator
+            from agent_hub.memory.vector_memory import VectorMemory
+            from agent_hub.rag.embedder import Embedder
+
+            embedder = Embedder(model_name=self._settings.embedding_model)
+            vector_memory = VectorMemory(
+                pg_dsn=self._settings.pg_dsn,
+                embedder=embedder,
+            )
+            conflict_detector = ConflictDetector(embedder=embedder)
+            memory_operator = MemoryOperator(
+                vector_memory=vector_memory,
+                conflict_detector=conflict_detector,
+            )
+            self._memory.inject_vector_memory(
+                vector_memory=vector_memory,
+                conflict_detector=conflict_detector,
+                memory_operator=memory_operator,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("vector_memory_inject_failed", error=str(exc))
 
     # ── 流式入口 ─────────────────────────────────────
 
@@ -175,25 +247,47 @@ class AgentPipeline:
         self,
         task_input: TaskInput,
     ) -> AsyncGenerator[dict[str, str], None]:
-        """Pipeline 流式入口：路由 → Agent → 逐 token yield。
+        """Pipeline 流式入口：Guard → 路由 → 权限 → Agent → 逐 token yield。
 
-        与 ``run()`` 流程一致，但在 Agent 执行阶段逐步推送。
-        仅 LLMAgent 支持真正的 token 级流式，其他 Agent 一次性返回。
+        与 ``run()`` 流程保持一致：先做安全检测、admin 权限校验，再串
+        Router → DAG 流式执行；执行完成后写入记忆。仅 LLMAgent 支持
+        真正的 token 级流式，其他 Agent 一次性返回。
 
         Args:
             task_input: 用户请求。
 
         Yields:
-            dict: ``{"type": "status"|"token"|"done", "content": "..."}``
+            dict: ``{"type": "status"|"token"|"error"|"done", "content": "..."}``
         """
         user_ctx = task_input.user_context
         session_id = user_ctx.session_id or user_ctx.user_id
 
-        # 路由
+        # ── Step 0: 安全检测（与 run() 一致） ────────
+        if self._guard is not None:
+            guard_result = await self._guard.check(task_input.raw_message)
+            if not guard_result.is_safe:
+                yield {
+                    "type": "error",
+                    "content": (
+                        "⚠️ 检测到潜在安全风险，请求已被拦截。"
+                        f"（规则命中: {guard_result.matched_rules}）"
+                    ),
+                }
+                return
+
+        # ── Step 1: 路由 ─────────────────────────────
         routing = await self._router.route(task_input.raw_message, user_ctx)
 
         if routing.mode == ExecutionMode.IGNORE or routing.low_confidence:
             yield {"type": "token", "content": self._build_fallback_response(routing)}
+            return
+
+        # ── Step 2: admin 权限校验（与 run() 一致） ──
+        if routing.requires_admin and user_ctx.role != UserRole.ADMIN:
+            yield {
+                "type": "error",
+                "content": "⚠️ 权限不足：该操作仅限管理员使用。",
+            }
             return
 
         if not routing.plan:
@@ -201,7 +295,8 @@ class AgentPipeline:
 
         routing = self._postprocess_subtasks(routing)
 
-        # 逐任务流式执行
+        # ── Step 3: 流式执行 ────────────────────────
+        collected_outputs: list[str] = []
         for subtask in routing.plan:
             agent_type = subtask.required_agents[0] if subtask.required_agents else "llm_agent"
             agent = self._agents.get(agent_type)
@@ -210,16 +305,46 @@ class AgentPipeline:
                 yield {"type": "token", "content": f"[未知 Agent: {agent_type}]"}
                 continue
 
+            # 与 run() 保持一致：注入用户角色，使 ReAct/工具调用受权限约束
+            if agent_type in ("tool_agent", "llm_agent") and hasattr(
+                agent, "set_user_role",
+            ):
+                agent.set_user_role(user_ctx.role.value)
+
             # 如果 agent 支持 run_stream，使用流式
             if hasattr(agent, "run_stream"):
                 async for chunk in agent.run_stream(subtask, session_id, user_ctx.user_id):
+                    if chunk.get("type") == "token" and chunk.get("content"):
+                        collected_outputs.append(str(chunk["content"]))
                     yield chunk
             else:
                 result = await agent.run(subtask, session_id, user_ctx.user_id)
                 if result.success and result.output:
-                    yield {"type": "token", "content": str(result.output)}
+                    text = str(result.output)
+                    collected_outputs.append(text)
+                    yield {"type": "token", "content": text}
                 elif result.error:
                     yield {"type": "error", "content": result.error}
+
+        # ── Step 4: 记忆写入（与 run() 对齐） ────────
+        try:
+            self._memory.add(
+                session_id=session_id,
+                user_id=user_ctx.user_id,
+                content=f"用户: {task_input.raw_message}",
+                memory_type="short_term",
+                tags=["user_request", routing.mode.value, "stream"],
+            )
+            if collected_outputs:
+                self._memory.add(
+                    session_id=session_id,
+                    user_id=user_ctx.user_id,
+                    content="".join(collected_outputs),
+                    memory_type="long_term",
+                    tags=["execution_summary", routing.mode.value, "stream"],
+                )
+        except Exception as exc:  # 记忆失败不应阻塞流式响应
+            logger.warning("stream_memory_save_failed", error=str(exc))
 
     # ── 主入口 ───────────────────────────────────────
 
@@ -271,6 +396,27 @@ class AgentPipeline:
                                 total_duration_ms=self._elapsed_ms(start_time),
                                 status="blocked",
                             )
+
+                # ── Step 0.5: 三级缓存查询（启用时） ─────
+                if self._cache is not None:
+                    try:
+                        hit = await self._cache.get(
+                            user_ctx.user_id, task_input.raw_message,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("cache_get_failed", error=str(exc))
+                        hit = None
+                    if hit is not None:
+                        root_span.add_event("cache_hit", {"level": hit.level})
+                        return TaskOutput(
+                            trace_id=trace_id,
+                            user_id=user_ctx.user_id,
+                            response=hit.response,
+                            agent_results=[],
+                            memory_saved=[],
+                            total_duration_ms=self._elapsed_ms(start_time),
+                            status="cache_hit",
+                        )
 
                 # ── Step 1: 路由决策 ─────────────────────
                 with SpanContext("step.router", trace_id):
@@ -324,6 +470,15 @@ class AgentPipeline:
 
                 # ── Step 5: 构建回复 ─────────────────────
                 response = self._build_response(routing, agent_results)
+
+                # ── Step 5.5: 缓存回写（启用时） ─────────
+                if self._cache is not None and response:
+                    try:
+                        await self._cache.set(
+                            user_ctx.user_id, task_input.raw_message, response,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("cache_set_failed", error=str(exc))
 
                 # ── Step 6: 记忆写入 ─────────────────────
                 memory_saved = self._save_memory(
@@ -406,8 +561,11 @@ class AgentPipeline:
 
         agent = self._agents[agent_type]
 
-        # ToolAgent 需要预设用户角色
-        if agent_type == "tool_agent" and hasattr(agent, "set_user_role"):
+        # ToolAgent / LLMAgent (ReAct) 都需要预设用户角色，
+        # 以便 admin 工具受到正确的权限过滤。
+        if agent_type in ("tool_agent", "llm_agent") and hasattr(
+            agent, "set_user_role",
+        ):
             agent.set_user_role(user_ctx.role.value)
 
         with SpanContext(f"agent.{subtask.subtask_id}", trace_id):

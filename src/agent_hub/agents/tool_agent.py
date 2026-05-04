@@ -166,6 +166,6 @@ class ToolAgent(BaseAgent):
     def _check_permission(self, tool_name: str, user_role: str) -> bool:
         """检查用户是否有权限调用该工具。"""
         tool = self._registry.get(tool_name)
-        return bool(tool) and (
-            not tool.spec.requires_admin or user_role == "admin"
-        )
+        if not tool:
+            return False
+        return not (tool.spec.requires_admin and user_role != "admin")

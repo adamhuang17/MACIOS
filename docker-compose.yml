@@ -8,8 +8,14 @@ services:
       POSTGRES_DSN: postgresql://agent:agent@postgres:5432/agent_hub
       REDIS_URL: redis://redis:6379/0
       OBSIDIAN_VAULT_PATH: /app/data/obsidian
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      DASHBOARD_STATIC_DIR: /app/web
+      PILOT_ENABLED: "true"
+      PILOT_DEMO_MODE: "true"
+      PILOT_STORE_PATH: /app/data/pilot/pilot.sqlite3
     volumes:
       - obsidian_data:/app/data/obsidian
+      - pilot_data:/app/data/pilot
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,3 +51,4 @@ services:
 volumes:
   pg_data:
   obsidian_data:
+  pilot_data:

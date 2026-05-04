@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pilot Dashboard (M2 minimal)</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+         margin: 0; padding: 1.5rem; background: #f6f7f9; color: #1f2328; }
+  h1 { margin: 0 0 1rem; font-size: 1.25rem; }
+  .grid { display: grid; grid-template-columns: 320px 1fr; gap: 1.5rem;
+          align-items: start; }
+  .card { background: #fff; border: 1px solid #e3e6ea; border-radius: 8px;
+          padding: 1rem; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+  .task { padding: 0.5rem; border-radius: 6px; cursor: pointer; }
+  .task:hover { background: #eef2f7; }
+  .task.selected { background: #dbe7fb; }
+  .task small { color: #6b7280; }
+  .badge { display: inline-block; padding: 1px 6px; border-radius: 999px;
+           font-size: 11px; margin-left: 6px; background: #e5e7eb; }
+  .badge.succeeded { background: #d1fae5; color: #065f46; }
+  .badge.failed, .badge.canceled { background: #fee2e2; color: #991b1b; }
+  .badge.blocked, .badge.awaiting_approval { background: #fef3c7; color: #92400e; }
+  .badge.running, .badge.planning { background: #dbeafe; color: #1e3a8a; }
+  pre { background: #0f172a; color: #cbd5e1; padding: 0.75rem;
+        border-radius: 6px; overflow: auto; font-size: 12px; max-height: 320px; }
+  .events li { font-family: ui-monospace, Menlo, Consolas, monospace;
+               font-size: 12px; padding: 2px 0; border-bottom: 1px dashed #e5e7eb; }
+  button { background: #2563eb; color: #fff; border: 0; padding: 4px 10px;
+           border-radius: 4px; cursor: pointer; }
+  button.reject { background: #dc2626; }
+  button + button { margin-left: 6px; }
+  input { padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>Pilot Dashboard <small style="color:#6b7280;font-weight:normal">(M2 read-only minimal)</small></h1>
+
+<div class="grid">
+  <div class="card">
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <button onclick="loadTasks()">刷新任务</button>
+      <input id="actor" placeholder="actor_id" value="dashboard-user" />
+    </div>
+    <div id="tasks">加载中…</div>
+  </div>
+
+  <div class="card">
+    <div id="detail">← 选择左侧任务查看详情</div>
+    <h3 style="margin-top:1rem">事件流 (SSE)</h3>
+    <ul id="events" class="events"></ul>
+  </div>
+</div>
+
+<script>
+const API = "/api/pilot";
+let selectedTaskId = null;
+let evtSource = null;
+
+async function loadTasks() {
+  const rows = await fetch(`${API}/tasks?limit=50`).then(r => r.json());
+  const el = document.getElementById("tasks");
+  if (!rows.length) { el.textContent = "暂无任务"; return; }
+  el.innerHTML = rows.map(r => `
+    <div class="task ${r.task_id === selectedTaskId ? 'selected':''}"
+         onclick="selectTask('${r.task_id}')">
+      <div><strong>${escapeHtml(r.title)}</strong>
+        <span class="badge ${r.status}">${r.status}</span></div>
+      <small>${r.task_id} · pending=${r.pending_approvals} · seq=${r.latest_sequence}</small>
+    </div>
+  `).join("");
+}
+
+async function selectTask(taskId) {
+  selectedTaskId = taskId;
+  await loadTasks();
+  await loadDetail();
+  startStream();
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[c]));
+}
+
+async function loadDetail() {
+  if (!selectedTaskId) return;
+  const d = await fetch(`${API}/tasks/${selectedTaskId}`).then(r => r.json());
+  const actions = (d.available_actions || []).map(renderAction).join("");
+  document.getElementById("detail").innerHTML = `
+    <h2 style="margin:0 0 4px">${escapeHtml(d.task.origin_text || d.task.task_id)}
+      <span class="badge ${d.task.status}">${d.task.status}</span></h2>
+    <div><small>workspace=${d.workspace.workspace_id} · plan=${d.active_plan?.plan_id || '—'}
+       · seq=${d.latest_sequence}</small></div>
+    <h3>可用操作</h3>
+    <div>${actions || '<em>无</em>'}</div>
+    <h3>步骤</h3>
+    <pre>${escapeHtml(JSON.stringify(d.steps, null, 2))}</pre>
+    <h3>审批</h3>
+    <pre>${escapeHtml(JSON.stringify(d.approvals, null, 2))}</pre>
+    <h3>工件</h3>
+    <pre>${escapeHtml(JSON.stringify(d.artifacts, null, 2))}</pre>
+  `;
+}
+
+function renderAction(a) {
+  if (a.type === "decide_plan" || a.type === "decide_step") {
+    return `<div style="margin:4px 0">
+      <code>${a.type}</code> · approval=${a.approval_id}
+      <button onclick="decide('${a.approval_id}','approve')">同意</button>
+      <button class="reject" onclick="decide('${a.approval_id}','reject')">拒绝</button>
+    </div>`;
+  }
+  if (a.type === "retry_task") {
+    return `<div><button onclick="retry()">重试任务</button></div>`;
+  }
+  if (a.type === "recover_from") {
+    return `<div><button onclick="recoverFrom('${a.step_id}')">从 ${a.step_id} 恢复</button></div>`;
+  }
+  return `<code>${escapeHtml(JSON.stringify(a))}</code>`;
+}
+
+async function decide(approvalId, decision) {
+  const actor = document.getElementById("actor").value || "dashboard-user";
+  const r = await fetch(`${API}/approvals/${approvalId}/decision`, {
+    method: "POST", headers: {"content-type":"application/json"},
+    body: JSON.stringify({decision, actor_id: actor, run_after_approval: true}),
+  });
+  if (!r.ok) { alert(await r.text()); return; }
+  await loadDetail(); await loadTasks();
+}
+
+async function retry() {
+  const actor = document.getElementById("actor").value || "dashboard-user";
+  // 使用 retry-from-first-failed-step；M2 简化：取第一个 failed step。
+  const d = await fetch(`${API}/tasks/${selectedTaskId}`).then(r => r.json());
+  const step = (d.steps || []).find(s => s.status === "failed");
+  if (!step) { alert("没有 failed step"); return; }
+  const r = await fetch(
+    `${API}/tasks/${selectedTaskId}/steps/${step.step_id}/retry`,
+    {method:"POST", headers:{"content-type":"application/json"},
+     body: JSON.stringify({requester_id: actor, auto_approve: false})});
+  if (!r.ok) { alert(await r.text()); return; }
+  const handle = await r.json();
+  await selectTask(handle.task_id);
+}
+
+async function recoverFrom(stepId) {
+  const actor = document.getElementById("actor").value || "dashboard-user";
+  const r = await fetch(
+    `${API}/tasks/${selectedTaskId}/steps/${stepId}/retry`,
+    {method:"POST", headers:{"content-type":"application/json"},
+     body: JSON.stringify({requester_id: actor, auto_approve: false})});
+  if (!r.ok) { alert(await r.text()); return; }
+  const handle = await r.json();
+  await selectTask(handle.task_id);
+}
+
+function startStream() {
+  if (evtSource) evtSource.close();
+  document.getElementById("events").innerHTML = "";
+  evtSource = new EventSource(`${API}/tasks/${selectedTaskId}/events`);
+  evtSource.onmessage = (m) => {
+    const data = JSON.parse(m.data);
+    if (data.type === "event") {
+      const li = document.createElement("li");
+      const ev = data.event;
+      li.textContent = `#${data.sequence} ${ev.type} — ${ev.message || ''}`;
+      document.getElementById("events").prepend(li);
+      // 追加事件后刷新一下详情（debounced 简化为直接 reload）
+      loadDetail();
+    } else if (data.type === "heartbeat") {
+      // ignore
+    } else if (data.type === "backfill_done") {
+      const li = document.createElement("li");
+      li.textContent = `— backfill done (latest=${data.latest_sequence}) —`;
+      document.getElementById("events").prepend(li);
+    }
+  };
+  evtSource.onerror = () => { /* 浏览器会自动重连 */ };
+}
+
+loadTasks();
+</script>
+</body>
+</html>
