@@ -32,6 +32,7 @@ def pipeline(settings):
         patch("agent_hub.agents.llm_agent.OpenAI"),
         patch("agent_hub.core.pipeline.RAGPipeline"),
         patch("agent_hub.core.router.AsyncOpenAI"),
+        patch("agent_hub.security.guard.AsyncOpenAI"),
     ):
         return AgentPipeline(settings)
 
