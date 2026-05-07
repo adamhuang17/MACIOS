@@ -208,6 +208,24 @@ class TestLLMGuard:
         assert result.confidence == 0.95
 
     @pytest.mark.asyncio
+    async def test_benign_reply_request_downgrades_llm_block(
+        self, mock_llm_guard: LLMGuard,
+    ) -> None:
+        """普通“请回复某句话”即使被 LLM 误报，也只标记 suspicious 并放行。"""
+        mock_resp = self._make_tool_response(
+            is_injection=True,
+            confidence=0.9,
+            explanation="误判为强制输出",
+        )
+        mock_llm_guard._client.chat.completions.create = AsyncMock(
+            return_value=mock_resp,
+        )
+
+        result = await mock_llm_guard.check("你好，你需要回复我“我很好”")
+        assert result.is_safe
+        assert result.risk_level == "suspicious"
+
+    @pytest.mark.asyncio
     async def test_detect_injection_low_confidence(
         self, mock_llm_guard: LLMGuard,
     ) -> None:

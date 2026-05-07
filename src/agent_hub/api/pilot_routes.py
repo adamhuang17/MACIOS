@@ -17,6 +17,7 @@ from agent_hub.api.pilot_dto import (
     ApprovalDecisionResponse,
     ArtifactView,
     RecoveryRequest,
+    ResumeTaskResponse,
     SubmitTaskRequest,
     SubmitTaskResponse,
     TaskDetailView,
@@ -136,6 +137,22 @@ def build_pilot_router(runtime: PilotRuntime) -> APIRouter:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return _handle_to_response(handle, runtime)
 
+    @router.post("/tasks/{task_id}/resume", response_model=ResumeTaskResponse)
+    async def resume_task(task_id: str) -> ResumeTaskResponse:
+        try:
+            payload = await runtime.commands.resume_task(task_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CommandError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except IllegalTransition as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ConcurrencyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return ResumeTaskResponse(**payload)
+
     # ── workspaces ────────────────────────────────
 
     @router.get("/workspaces", response_model=list[WorkspaceSummaryView])
@@ -175,6 +192,41 @@ def build_pilot_router(runtime: PilotRuntime) -> APIRouter:
                 status_code=404, detail=f"unknown artifact: {artifact_id}",
             )
         return ArtifactView.model_validate(art, from_attributes=True)
+
+    @router.get("/artifacts/{artifact_id}/content")
+    async def get_artifact_content(
+        artifact_id: str,
+        max_bytes: int = Query(default=8192, ge=256, le=131072),  # noqa: B008
+    ) -> dict[str, object]:
+        """只读取 text/json artifact 的预览内容。
+
+        - text/json 类型：返回 ``kind=text|json`` 与 ``content``；
+          超长按字符截断并设置 ``truncated=true``。
+        - 二进制（如 PPTX）：返回 ``kind=binary`` + 元数据，**不**返回 bytes。
+        """
+        art = await runtime.queries.get_artifact(artifact_id)
+        if art is None:
+            raise HTTPException(
+                status_code=404, detail=f"unknown artifact: {artifact_id}",
+            )
+        content = await runtime.artifacts.read_content_by_id(artifact_id)
+        if content is None:
+            return {"kind": "empty", "artifact_id": artifact_id,
+                    "mime_type": art.mime_type}
+        if isinstance(content, dict | list):
+            return {"kind": "json", "artifact_id": artifact_id,
+                    "mime_type": art.mime_type or "application/json",
+                    "content": content, "truncated": False}
+        if isinstance(content, str):
+            truncated = len(content) > max_bytes
+            return {"kind": "text", "artifact_id": artifact_id,
+                    "mime_type": art.mime_type or "text/plain",
+                    "content": content[:max_bytes],
+                    "truncated": truncated}
+        # bytes：仅返回元数据，避免在 dashboard 直接传输 PPT
+        return {"kind": "binary", "artifact_id": artifact_id,
+                "mime_type": art.mime_type, "size_bytes": len(content),
+                "share_url": art.share_url, "uri": art.uri}
 
     # ── approvals ─────────────────────────────────
 

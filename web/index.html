@@ -2,186 +2,1045 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Pilot Dashboard (M2 minimal)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Agent-Hub 任务驾驶舱</title>
 <style>
-  body { font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif;
-         margin: 0; padding: 1.5rem; background: #f6f7f9; color: #1f2328; }
-  h1 { margin: 0 0 1rem; font-size: 1.25rem; }
-  .grid { display: grid; grid-template-columns: 320px 1fr; gap: 1.5rem;
-          align-items: start; }
-  .card { background: #fff; border: 1px solid #e3e6ea; border-radius: 8px;
-          padding: 1rem; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
-  .task { padding: 0.5rem; border-radius: 6px; cursor: pointer; }
-  .task:hover { background: #eef2f7; }
-  .task.selected { background: #dbe7fb; }
-  .task small { color: #6b7280; }
-  .badge { display: inline-block; padding: 1px 6px; border-radius: 999px;
-           font-size: 11px; margin-left: 6px; background: #e5e7eb; }
-  .badge.succeeded { background: #d1fae5; color: #065f46; }
-  .badge.failed, .badge.canceled { background: #fee2e2; color: #991b1b; }
-  .badge.blocked, .badge.awaiting_approval { background: #fef3c7; color: #92400e; }
-  .badge.running, .badge.planning { background: #dbeafe; color: #1e3a8a; }
-  pre { background: #0f172a; color: #cbd5e1; padding: 0.75rem;
-        border-radius: 6px; overflow: auto; font-size: 12px; max-height: 320px; }
-  .events li { font-family: ui-monospace, Menlo, Consolas, monospace;
-               font-size: 12px; padding: 2px 0; border-bottom: 1px dashed #e5e7eb; }
-  button { background: #2563eb; color: #fff; border: 0; padding: 4px 10px;
-           border-radius: 4px; cursor: pointer; }
-  button.reject { background: #dc2626; }
-  button + button { margin-left: 6px; }
-  input { padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; }
+  :root {
+    --bg: #f5f7fb;
+    --surface: #ffffff;
+    --surface-soft: #f8fafc;
+    --border: #e3e6ec;
+    --border-soft: #eef0f5;
+    --text: #1f2328;
+    --text-soft: #5b6472;
+    --text-mute: #8a93a3;
+    --primary: #2563eb;
+    --primary-dark: #1d4ed8;
+    --primary-soft: #e0eaff;
+    --accent: #0ea5e9;
+    --warn: #b45309;
+    --warn-soft: #fef3c7;
+    --warn-border: #fcd34d;
+    --ok: #047857;
+    --ok-soft: #d1fae5;
+    --err: #b91c1c;
+    --err-soft: #fee2e2;
+    --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.05);
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    background: var(--primary);
+    color: #fff;
+    border: 0;
+    border-radius: 8px;
+    padding: 8px 14px;
+    transition: background 0.15s ease, transform 0.05s ease;
+  }
+  button:hover { background: var(--primary-dark); }
+  button:active { transform: translateY(1px); }
+  button.ghost {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  button.ghost:hover { background: var(--surface-soft); }
+  button.danger { background: #dc2626; }
+  button.danger:hover { background: #b91c1c; }
+  button.warn { background: #f59e0b; color: #1f2328; }
+  button.warn:hover { background: #d97706; color: #fff; }
+  button.tiny { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
+  input, select {
+    font: inherit;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text);
+  }
+  input:focus, select:focus {
+    outline: 2px solid var(--primary-soft);
+    border-color: var(--primary);
+  }
+
+  /* ── 顶部品牌栏 ───────────────────────────────── */
+  header.appbar {
+    position: sticky; top: 0; z-index: 50;
+    background: linear-gradient(120deg, #1d4ed8 0%, #0ea5e9 100%);
+    color: #fff;
+    padding: 10px 20px;
+    display: flex; align-items: center; gap: 12px;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08);
+  }
+  header.appbar h1 {
+    margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.3px;
+  }
+  header.appbar .tagline {
+    font-size: 12px; opacity: 0.85;
+  }
+  header.appbar .grow { flex: 1; }
+  header.appbar .live-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: #4ade80; margin-right: 6px;
+    box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.6);
+    animation: pulse 1.6s infinite;
+  }
+  header.appbar.live-off .live-dot { background: #f87171; animation: none; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.55); }
+    70% { box-shadow: 0 0 0 10px rgba(74, 222, 128, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+  }
+  header.appbar .menu-btn {
+    display: none;
+    background: rgba(255,255,255,0.18); color: #fff;
+    border: 0; border-radius: 8px; padding: 6px 10px;
+  }
+
+  /* ── 总体布局 ────────────────────────────────── */
+  .app {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    gap: 16px;
+    padding: 16px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  @media (max-width: 880px) {
+    .app { grid-template-columns: 1fr; padding: 12px; gap: 12px; }
+    header.appbar .menu-btn { display: inline-block; }
+    aside.sidebar {
+      position: fixed; inset: 56px 0 0 0; z-index: 40;
+      background: var(--bg); padding: 12px;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+      overflow-y: auto;
+    }
+    aside.sidebar.open { transform: translateX(0); }
+  }
+
+  /* ── 卡片基础 ────────────────────────────────── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 16px;
+  }
+  .card h2 {
+    margin: 0 0 8px; font-size: 15px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card h3 {
+    margin: 0 0 10px; font-size: 13px; font-weight: 600;
+    color: var(--text-soft);
+    text-transform: uppercase; letter-spacing: 0.6px;
+  }
+  .meta { color: var(--text-mute); font-size: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .stack > * + * { margin-top: 12px; }
+
+  /* ── 任务列表 ───────────────────────────────── */
+  aside.sidebar { display: flex; flex-direction: column; gap: 12px; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .toolbar input { flex: 1; min-width: 0; }
+  .task-list { display: flex; flex-direction: column; gap: 8px; max-height: 70vh; overflow-y: auto; }
+  .task {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    cursor: pointer;
+    background: var(--surface);
+    transition: border-color 0.15s, background 0.15s, transform 0.05s;
+  }
+  .task:hover { border-color: var(--primary); background: var(--surface-soft); }
+  .task.selected {
+    border-color: var(--primary);
+    background: var(--primary-soft);
+    box-shadow: inset 3px 0 0 var(--primary);
+  }
+  .task .title { font-weight: 600; font-size: 13px; line-height: 1.35;
+                 display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+                 overflow: hidden; }
+  .task .sub { color: var(--text-mute); font-size: 11px; margin-top: 4px;
+               display: flex; flex-wrap: wrap; gap: 6px; }
+
+  /* ── 状态徽章 ────────────────────────────────── */
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 999px; font-size: 11px;
+    background: #eef1f5; color: #475569; font-weight: 500;
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+  .badge::before {
+    content: ""; display: inline-block; width: 6px; height: 6px;
+    border-radius: 50%; background: currentColor; opacity: 0.65;
+  }
+  .badge.ok { background: var(--ok-soft); color: var(--ok); }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); }
+  .badge.err { background: var(--err-soft); color: var(--err); }
+  .badge.run { background: #dbeafe; color: #1d4ed8; }
+  .badge.muted { background: #e5e7eb; color: #4b5563; }
+
+  /* ── 任务详情顶部 ────────────────────────────── */
+  .task-hero {
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .task-hero .title-row {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-start;
+  }
+  .task-hero h1 {
+    margin: 0; font-size: 20px; font-weight: 700; line-height: 1.3;
+    flex: 1; min-width: 0; word-break: break-word;
+  }
+  .task-hero .meta-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px 16px; margin-top: 4px;
+  }
+  .task-hero .meta-grid div { font-size: 12px; color: var(--text-soft); }
+  .task-hero .meta-grid strong { color: var(--text); font-size: 13px; display: block; }
+  .activity-bar {
+    background: linear-gradient(120deg, #eff6ff, #ecfeff);
+    border: 1px solid #c7e0ff;
+    border-radius: 10px;
+    padding: 10px 14px;
+    color: #1e3a8a;
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 500;
+  }
+  .activity-bar .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid #93c5fd; border-top-color: #1d4ed8;
+    border-radius: 50%; animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── 审批区 ─────────────────────────────────── */
+  .approval-card {
+    background: linear-gradient(120deg, #fffbeb, #fef3c7);
+    border: 1px solid var(--warn-border);
+    border-radius: 12px; padding: 14px;
+    box-shadow: 0 4px 14px rgba(217, 119, 6, 0.08);
+  }
+  .approval-card .pending-title {
+    font-weight: 600; color: var(--warn); margin-bottom: 6px;
+  }
+  .approval-card .preview {
+    background: #fff; border: 1px solid #fde68a; border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; color: var(--text-soft);
+    margin: 8px 0; max-height: 160px; overflow: auto;
+    white-space: pre-wrap;
+  }
+  .approval-card .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* ── 步骤时间线 ──────────────────────────────── */
+  .timeline { display: flex; flex-direction: column; gap: 10px; position: relative; }
+  .step {
+    display: grid;
+    grid-template-columns: 32px 1fr;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-soft);
+    border-radius: 10px;
+    background: var(--surface-soft);
+  }
+  .step.active { border-color: var(--primary); background: #f5f9ff; }
+  .step.failed { border-color: #fca5a5; background: #fff5f5; }
+  .step.done { border-color: #a7f3d0; background: #f4fdf8; }
+  .step .idx {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #fff; border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: var(--text-soft); font-weight: 600;
+  }
+  .step.active .idx { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .step.failed .idx { background: var(--err); color: #fff; border-color: var(--err); }
+  .step.done .idx { background: var(--ok); color: #fff; border-color: var(--ok); }
+  .step .title { font-weight: 600; font-size: 13px; }
+  .step .sub { font-size: 12px; color: var(--text-mute); margin-top: 2px;
+               display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .step .err-msg {
+    margin-top: 6px; font-size: 12px; color: var(--err);
+    background: #fff; border: 1px solid #fecaca; border-radius: 6px;
+    padding: 6px 8px; white-space: pre-wrap;
+  }
+
+  /* ── 成果 ───────────────────────────────────── */
+  .artifact-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 10px;
+  }
+  .artifact {
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px; background: var(--surface);
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .artifact .head {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .artifact .icon {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: var(--primary-soft); color: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+  }
+  .artifact .title { font-weight: 600; font-size: 13px;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .artifact .meta-line { font-size: 11px; color: var(--text-mute); }
+  .artifact .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
+  .preview-box {
+    margin-top: 6px; background: var(--surface-soft);
+    border: 1px solid var(--border-soft); border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; color: var(--text-soft);
+    max-height: 220px; overflow: auto;
+    white-space: pre-wrap; word-break: break-word;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  /* ── 事件流 ─────────────────────────────────── */
+  .events {
+    display: flex; flex-direction: column; gap: 4px;
+    max-height: 360px; overflow-y: auto;
+  }
+  .event {
+    display: grid; grid-template-columns: 70px 1fr;
+    gap: 8px; padding: 6px 4px;
+    border-bottom: 1px dashed var(--border-soft);
+    font-size: 12px;
+  }
+  .event:last-child { border-bottom: 0; }
+  .event .ts { color: var(--text-mute); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .event .label { font-weight: 500; }
+  .event .msg { color: var(--text-soft); }
+  .event.lvl-warn .label { color: var(--warn); }
+  .event.lvl-error .label { color: var(--err); }
+
+  /* ── Toast ─────────────────────────────────── */
+  .toast-host {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    z-index: 100; display: flex; flex-direction: column; gap: 6px;
+  }
+  .toast {
+    background: #1f2937; color: #fff; padding: 10px 14px; border-radius: 8px;
+    font-size: 13px; box-shadow: 0 6px 18px rgba(15,23,42,0.25);
+    opacity: 0; transform: translateY(8px); transition: all 0.2s ease;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.err { background: #7f1d1d; }
+  .toast.ok { background: #065f46; }
+
+  details.expand { font-size: 12px; }
+  details.expand summary {
+    cursor: pointer; color: var(--primary); padding: 2px 0;
+  }
+  details.expand pre {
+    background: #0f172a; color: #cbd5e1; padding: 10px;
+    border-radius: 6px; font-size: 11px; overflow: auto;
+    max-height: 320px;
+  }
+
+  .empty { color: var(--text-mute); font-size: 13px; padding: 8px 0; }
 </style>
 </head>
 <body>
-<h1>Pilot Dashboard <small style="color:#6b7280;font-weight:normal">(M2 read-only minimal)</small></h1>
 
-<div class="grid">
-  <div class="card">
-    <div style="display:flex;gap:8px;margin-bottom:8px">
-      <button onclick="loadTasks()">刷新任务</button>
-      <input id="actor" placeholder="actor_id" value="dashboard-user" />
+<header class="appbar" id="appbar">
+  <button class="menu-btn" id="menuBtn" type="button" aria-label="任务列表">☰ 任务</button>
+  <h1>Agent-Hub <span class="tagline">任务驾驶舱</span></h1>
+  <div class="grow"></div>
+  <span class="meta" id="liveStatus"><span class="live-dot"></span>实时连接</span>
+</header>
+
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="card">
+      <h3>任务列表</h3>
+      <div class="toolbar">
+        <button class="tiny ghost" type="button" onclick="loadTasks()">刷新</button>
+        <input id="actor" placeholder="操作者 ID" value="dashboard-user" />
+      </div>
+      <div class="task-list" id="tasks">
+        <div class="empty">加载中…</div>
+      </div>
     </div>
-    <div id="tasks">加载中…</div>
-  </div>
+  </aside>
 
-  <div class="card">
-    <div id="detail">← 选择左侧任务查看详情</div>
-    <h3 style="margin-top:1rem">事件流 (SSE)</h3>
-    <ul id="events" class="events"></ul>
-  </div>
+  <main class="stack" id="main">
+    <div class="card" id="detail">
+      <div class="empty">← 从左侧选择一个任务，查看进度、审批和成果。</div>
+    </div>
+  </main>
 </div>
+
+<div class="toast-host" id="toastHost"></div>
 
 <script>
 const API = "/api/pilot";
 let selectedTaskId = null;
 let evtSource = null;
+let lastLiveAt = 0;
+let liveTimer = null;
 
+// ── 文案映射 ─────────────────────────────────────
+const TASK_STATUS = {
+  created: ['已创建', 'muted'],
+  planning: ['规划中', 'run'],
+  awaiting_approval: ['等待审批', 'warn'],
+  approved: ['已审批', 'run'],
+  running: ['执行中', 'run'],
+  blocked: ['等待中', 'warn'],
+  succeeded: ['已完成', 'ok'],
+  failed: ['失败', 'err'],
+  retryable_failed: ['可重试失败', 'err'],
+  cancelled: ['已取消', 'muted'],
+  archived: ['已归档', 'muted'],
+};
+const STEP_STATUS = {
+  pending: ['待开始', 'muted'],
+  dry_running: ['试运行', 'run'],
+  waiting_approval: ['等待审批', 'warn'],
+  approved: ['已审批', 'run'],
+  running: ['执行中', 'run'],
+  succeeded: ['已完成', 'ok'],
+  failed: ['失败', 'err'],
+  retryable_failed: ['可重试失败', 'err'],
+  skipped: ['已跳过', 'muted'],
+  cancelled: ['已取消', 'muted'],
+};
+const APPROVAL_STATUS = {
+  requested: ['待审批', 'warn'],
+  approved: ['已通过', 'ok'],
+  rejected: ['已拒绝', 'err'],
+  expired: ['已过期', 'muted'],
+  superseded: ['已取代', 'muted'],
+  auto_approved: ['自动通过', 'ok'],
+  cancelled: ['已取消', 'muted'],
+};
+const ARTIFACT_STATUS = {
+  draft: ['草稿', 'muted'],
+  generated: ['已生成', 'run'],
+  uploaded: ['已上传', 'ok'],
+  shared: ['已分享', 'ok'],
+  superseded: ['已替换', 'muted'],
+  failed: ['失败', 'err'],
+  archived: ['已归档', 'muted'],
+};
+const SKILL_LABELS = {
+  'internal.context.pull': '收集上下文',
+  'internal.brief.generate': '生成需求 Brief',
+  'internal.summary.generate': '生成总结',
+  'real.slide.generate_spec': '生成 PPT 大纲',
+  'real.slide.render_pptx': '渲染 PPT 文件',
+  'real.drive.upload_share': '上传飞书云文档并分享',
+  'fake.slide.generate_spec': '生成 PPT 大纲（演示）',
+  'fake.slide.render_pptx': '渲染 PPT（演示）',
+  'fake.drive.upload_share': '上传分享（演示）',
+  'feishu.notify': '飞书通知',
+  'feishu.card.update': '更新飞书卡片',
+};
+const ARTIFACT_META = {
+  context_bundle: { label: '上下文', icon: '📥' },
+  project_brief_md: { label: '需求 Brief', icon: '📝' },
+  slide_spec_json: { label: 'PPT 大纲', icon: '🗂️' },
+  pptx: { label: 'PPT 文件', icon: '📊' },
+  feishu_doc: { label: '飞书文档', icon: '📄' },
+  feishu_slide: { label: '飞书幻灯片', icon: '📑' },
+  drive_file: { label: '飞书云文档', icon: '☁️' },
+  share_link: { label: '分享链接', icon: '🔗' },
+  summary: { label: '任务总结', icon: '✅' },
+};
+const EVENT_LABELS = {
+  'workspace.created': '创建工作区',
+  'task.created': '任务创建',
+  'task.progress': '任务进度',
+  'task.status_changed': '任务状态变化',
+  'task.completed': '任务完成',
+  'task.failed': '任务失败',
+  'plan.generated': '生成计划',
+  'plan.status_changed': '计划状态变化',
+  'approval.requested': '发起审批',
+  'approval.decided': '审批决议',
+  'approval.expired': '审批过期',
+  'approval.superseded': '审批被替换',
+  'step.status_changed': '步骤状态变化',
+  'skill.dry_run': '试运行技能',
+  'skill.invoked': '执行技能',
+  'artifact.created': '生成成果',
+  'artifact.status_changed': '成果状态变化',
+};
+
+// ── 工具函数 ─────────────────────────────────────
+function escapeHtml(s) {
+  return (s == null ? "" : String(s)).replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;",
+  }[c]));
+}
+function badge(map, key) {
+  const [label, cls] = map[key] || [key || '—', 'muted'];
+  return `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
+}
+function fmtTime(s) {
+  if (!s) return '—';
+  try {
+    const d = new Date(s);
+    if (isNaN(d)) return s;
+    const now = new Date();
+    const diff = (now - d) / 1000;
+    if (diff < 60) return '刚刚';
+    if (diff < 3600) return `${Math.floor(diff/60)} 分钟前`;
+    if (diff < 86400) return `${Math.floor(diff/3600)} 小时前`;
+    return d.toLocaleString('zh-CN', { hour12: false });
+  } catch { return s; }
+}
+function fmtTimeShort(s) {
+  if (!s) return '';
+  try {
+    const d = new Date(s);
+    if (isNaN(d)) return '';
+    return d.toLocaleTimeString('zh-CN', { hour12: false });
+  } catch { return ''; }
+}
+function fmtAgeSeconds(s) {
+  if (!s) return '刚刚';
+  try {
+    const d = new Date(s);
+    if (isNaN(d)) return '刚刚';
+    const diff = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+    if (diff < 3) return '刚刚';
+    if (diff < 60) return `${diff} 秒前`;
+    if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
+    return `${Math.floor(diff / 3600)} 小时前`;
+  } catch { return '刚刚'; }
+}
+function skillLabel(name) {
+  if (!name) return '—';
+  return SKILL_LABELS[name] || name;
+}
+function toast(msg, kind) {
+  const host = document.getElementById('toastHost');
+  const el = document.createElement('div');
+  el.className = `toast ${kind || ''}`;
+  el.textContent = msg;
+  host.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 250);
+  }, 3000);
+}
+function setLive(on) {
+  const bar = document.getElementById('appbar');
+  bar.classList.toggle('live-off', !on);
+  document.getElementById('liveStatus').lastChild.textContent =
+    on ? '实时连接' : '连接断开，重连中…';
+}
+
+// ── 任务列表 ─────────────────────────────────────
 async function loadTasks() {
-  const rows = await fetch(`${API}/tasks?limit=50`).then(r => r.json());
-  const el = document.getElementById("tasks");
-  if (!rows.length) { el.textContent = "暂无任务"; return; }
+  let rows;
+  try {
+    rows = await fetch(`${API}/tasks?limit=50`).then(r => r.json());
+  } catch (e) {
+    document.getElementById('tasks').innerHTML =
+      `<div class="empty">无法加载任务列表：${escapeHtml(e.message || e)}</div>`;
+    return;
+  }
+  const el = document.getElementById('tasks');
+  if (!rows || !rows.length) {
+    el.innerHTML = '<div class="empty">暂无任务，先在飞书或 API 发起一个吧。</div>';
+    return;
+  }
   el.innerHTML = rows.map(r => `
-    <div class="task ${r.task_id === selectedTaskId ? 'selected':''}"
-         onclick="selectTask('${r.task_id}')">
-      <div><strong>${escapeHtml(r.title)}</strong>
-        <span class="badge ${r.status}">${r.status}</span></div>
-      <small>${r.task_id} · pending=${r.pending_approvals} · seq=${r.latest_sequence}</small>
+    <div class="task ${r.task_id === selectedTaskId ? 'selected' : ''}"
+         onclick="selectTask('${escapeHtml(r.task_id)}')">
+      <div class="title">${escapeHtml(r.title || r.task_id)}</div>
+      <div class="sub">
+        ${badge(TASK_STATUS, r.status)}
+        ${r.pending_approvals ? `<span class="badge warn">待审批 ${r.pending_approvals}</span>` : ''}
+        <span>·</span>
+        <span>${escapeHtml(fmtTime(r.updated_at))}</span>
+      </div>
     </div>
-  `).join("");
+  `).join('');
 }
 
 async function selectTask(taskId) {
   selectedTaskId = taskId;
-  await loadTasks();
-  await loadDetail();
+  document.getElementById('sidebar')?.classList.remove('open');
+  await Promise.all([loadTasks(), loadDetail()]);
   startStream();
 }
 
-function escapeHtml(s) {
-  return (s || "").replace(/[&<>"']/g, c => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-  }[c]));
+// ── 任务详情 ─────────────────────────────────────
+let _detailReloadTimer = null;
+function scheduleDetailReload() {
+  if (_detailReloadTimer) return;
+  _detailReloadTimer = setTimeout(() => {
+    _detailReloadTimer = null;
+    loadDetail();
+    loadTasks();
+  }, 300);
 }
 
 async function loadDetail() {
   if (!selectedTaskId) return;
-  const d = await fetch(`${API}/tasks/${selectedTaskId}`).then(r => r.json());
-  const actions = (d.available_actions || []).map(renderAction).join("");
-  document.getElementById("detail").innerHTML = `
-    <h2 style="margin:0 0 4px">${escapeHtml(d.task.origin_text || d.task.task_id)}
-      <span class="badge ${d.task.status}">${d.task.status}</span></h2>
-    <div><small>workspace=${d.workspace.workspace_id} · plan=${d.active_plan?.plan_id || '—'}
-       · seq=${d.latest_sequence}</small></div>
-    <h3>可用操作</h3>
-    <div>${actions || '<em>无</em>'}</div>
-    <h3>步骤</h3>
-    <pre>${escapeHtml(JSON.stringify(d.steps, null, 2))}</pre>
-    <h3>审批</h3>
-    <pre>${escapeHtml(JSON.stringify(d.approvals, null, 2))}</pre>
-    <h3>工件</h3>
-    <pre>${escapeHtml(JSON.stringify(d.artifacts, null, 2))}</pre>
+  let d;
+  try {
+    d = await fetch(`${API}/tasks/${selectedTaskId}`).then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  } catch (e) {
+    document.getElementById('detail').innerHTML =
+      `<div class="empty">读取任务失败：${escapeHtml(e.message || e)}</div>`;
+    return;
+  }
+  document.getElementById('detail').innerHTML = renderDetail(d);
+}
+
+function renderDetail(d) {
+  return [
+    renderHero(d),
+    renderApprovals(d),
+    renderActions(d),
+    renderSteps(d),
+    renderArtifacts(d),
+    renderEvents(d),
+  ].join('');
+}
+
+function renderHero(d) {
+  const t = d.task || {};
+  const title = t.origin_text || t.title || t.task_id;
+  const activity = currentActivity(d);
+  return `
+    <section class="task-hero" style="margin-bottom:14px">
+      <div class="title-row">
+        <h1>${escapeHtml(title)}</h1>
+        ${badge(TASK_STATUS, t.status)}
+      </div>
+      ${activity ? `
+        <div class="activity-bar">
+          <span class="spinner"></span>
+          <span>${escapeHtml(activity)}</span>
+        </div>
+      ` : ''}
+      <div class="meta-grid">
+        <div>发起人 <strong>${escapeHtml(t.requester_id || '—')}</strong></div>
+        <div>来源 <strong>${escapeHtml((d.workspace || {}).source_channel || '—')}</strong></div>
+        <div>工作区 <strong>${escapeHtml((d.workspace || {}).title || (d.workspace || {}).workspace_id || '—')}</strong></div>
+        <div>最近更新 <strong>${escapeHtml(fmtTime(t.updated_at))}</strong></div>
+        <div>事件序列 <strong>${escapeHtml(d.latest_sequence ?? '—')}</strong></div>
+        <div>计划版本 <strong>${escapeHtml((d.active_plan || {}).plan_version || '—')}</strong></div>
+      </div>
+      ${t.error ? `<div class="step failed"><div class="idx">!</div><div>
+        <div class="title">最近错误</div>
+        <div class="err-msg">${escapeHtml(t.error)}</div>
+      </div></div>` : ''}
+      ${t.final_summary ? `<div class="card" style="background:var(--surface-soft);padding:10px 12px">
+        <h3 style="margin-bottom:4px">最终总结</h3>
+        <div style="white-space:pre-wrap;font-size:13px">${escapeHtml(t.final_summary)}</div>
+      </div>` : ''}
+    </section>
   `;
 }
 
-function renderAction(a) {
-  if (a.type === "decide_plan" || a.type === "decide_step") {
-    return `<div style="margin:4px 0">
-      <code>${a.type}</code> · approval=${a.approval_id}
-      <button onclick="decide('${a.approval_id}','approve')">同意</button>
-      <button class="reject" onclick="decide('${a.approval_id}','reject')">拒绝</button>
-    </div>`;
+function currentActivity(d) {
+  const t = d.task || {};
+  if (t.status === 'succeeded') return null;
+  if (t.status === 'failed' || t.status === 'cancelled' || t.status === 'archived') return null;
+  const progress = latestProgressEvent(d);
+  if (progress) {
+    const kind = progress.payload && progress.payload.kind;
+    if (kind === 'heartbeat') return progress.message;
+    return `${progress.message} · 最近活动 ${fmtAgeSeconds(progress.created_at)}`;
   }
-  if (a.type === "retry_task") {
-    return `<div><button onclick="retry()">重试任务</button></div>`;
+  if (t.status === 'awaiting_approval') return '等待你在飞书或下方审批';
+  if (t.status === 'blocked') {
+    const pending = (d.approvals || []).find(a => a.status === 'requested');
+    if (pending) return '审批进行中，待你处理';
+    return '任务已暂停，等待恢复';
   }
-  if (a.type === "recover_from") {
-    return `<div><button onclick="recoverFrom('${a.step_id}')">从 ${a.step_id} 恢复</button></div>`;
-  }
-  return `<code>${escapeHtml(JSON.stringify(a))}</code>`;
+  // 找正在执行的 step
+  const running = (d.steps || []).find(s =>
+    s.status === 'running' || s.status === 'dry_running');
+  if (running) return `正在 ${skillLabel(running.skill_name)}`;
+  if (t.status === 'planning') return '正在生成执行计划';
+  if (t.status === 'running' || t.status === 'approved') return 'Agent 正在执行';
+  if (t.status === 'created') return '任务已创建，准备开始';
+  return null;
 }
 
+function latestProgressEvent(d) {
+  const events = d.recent_events || [];
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    if (events[i].type === 'task.progress') return events[i];
+  }
+  return null;
+}
+
+function renderApprovals(d) {
+  const pending = (d.approvals || []).filter(a => a.status === 'requested');
+  if (!pending.length) return '';
+  const cards = pending.map(a => {
+    const apprId = escapeHtml(a.approval_id);
+    return `
+      <div class="approval-card" style="margin-bottom:10px">
+        <div class="pending-title">⚠ 等待你审批 · ${escapeHtml(targetTypeLabel(a.target_type))}</div>
+        <div class="meta">
+          申请人 ${escapeHtml(a.requester_id || '—')} ·
+          ${escapeHtml(fmtTime(a.created_at))}
+        </div>
+        ${a.reason ? `<div style="margin-top:6px;font-size:13px">${escapeHtml(a.reason)}</div>` : ''}
+        ${a.preview ? `<div class="preview">${escapeHtml(a.preview)}</div>` : ''}
+        <div class="actions">
+          <button onclick="decide('${apprId}','approve')">✓ 同意</button>
+          <button class="danger" onclick="decide('${apprId}','reject')">✗ 拒绝</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  return `<section style="margin-bottom:14px">
+    <h3 style="margin-bottom:8px;color:var(--warn);text-transform:uppercase;letter-spacing:0.6px">待办审批</h3>
+    ${cards}
+  </section>`;
+}
+
+function targetTypeLabel(t) {
+  return ({
+    plan: '执行计划',
+    step: '某个步骤',
+    share: '分享操作',
+    write: '写入操作',
+  })[t] || (t || '审批');
+}
+
+function renderActions(d) {
+  const acts = (d.available_actions || []).filter(a =>
+    a.type !== 'decide_plan' && a.type !== 'decide_step');
+  if (!acts.length) return '';
+  const buttons = acts.map(a => {
+    if (a.type === 'retry_task') {
+      return `<button class="warn tiny" onclick="retry()">重试任务</button>`;
+    }
+    if (a.type === 'recover_from') {
+      return `<button class="warn tiny" onclick="recoverFrom('${escapeHtml(a.step_id)}')">从「${escapeHtml(skillLabel(a.skill_name) || a.step_id)}」恢复</button>`;
+    }
+    if (a.type === 'resume_task') {
+      const label = a.label || '继续执行';
+      return `<button class="tiny" onclick="resumeTask('${escapeHtml(a.task_id)}')">${escapeHtml(label)}</button>`;
+    }
+    return `<button class="ghost tiny">${escapeHtml(a.type)}</button>`;
+  }).join(' ');
+  return `<section class="card" style="margin-bottom:14px">
+    <h3>可执行操作</h3>
+    <div class="row">${buttons}</div>
+  </section>`;
+}
+
+function renderSteps(d) {
+  const steps = d.steps || [];
+  if (!steps.length) return '';
+  const items = steps.map((s, i) => {
+    const cls = s.status === 'succeeded' ? 'done'
+              : (s.status === 'running' || s.status === 'dry_running' || s.status === 'waiting_approval') ? 'active'
+              : (s.status === 'failed' || s.status === 'retryable_failed') ? 'failed'
+              : '';
+    const sub = [
+      badge(STEP_STATUS, s.status),
+      s.requires_approval ? '<span class="badge muted">需审批</span>' : '',
+      s.risk_level && s.risk_level !== 'read'
+        ? `<span class="badge muted">风险:${escapeHtml(s.risk_level)}</span>` : '',
+      s.retry_count ? `<span class="badge muted">重试 ${s.retry_count}</span>` : '',
+      s.started_at ? `<span>开始 ${fmtTimeShort(s.started_at)}</span>` : '',
+      s.finished_at ? `<span>结束 ${fmtTimeShort(s.finished_at)}</span>` : '',
+    ].filter(Boolean).join(' ');
+    return `<div class="step ${cls}">
+      <div class="idx">${i + 1}</div>
+      <div>
+        <div class="title">${escapeHtml(s.title || skillLabel(s.skill_name))}</div>
+        <div class="sub">${sub}</div>
+        ${s.error ? `<div class="err-msg">${escapeHtml(s.error)}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  return `<section class="card" style="margin-bottom:14px">
+    <h3>执行步骤</h3>
+    <div class="timeline">${items}</div>
+  </section>`;
+}
+
+function renderArtifacts(d) {
+  const arts = (d.artifacts || []).filter(a => a.status !== 'superseded');
+  if (!arts.length) {
+    return `<section class="card" style="margin-bottom:14px">
+      <h3>成果</h3>
+      <div class="empty">任务还没有产生成果。</div>
+    </section>`;
+  }
+  const cards = arts.map(renderArtifactCard).join('');
+  return `<section class="card" style="margin-bottom:14px">
+    <h3>成果（${arts.length}）</h3>
+    <div class="artifact-grid">${cards}</div>
+  </section>`;
+}
+
+function renderArtifactCard(a) {
+  const meta = ARTIFACT_META[a.type] || { label: a.type, icon: '📦' };
+  const actions = [];
+  if (a.share_url) {
+    actions.push(`<a href="${escapeHtml(a.share_url)}" target="_blank" rel="noopener">
+      <button class="tiny">打开分享</button></a>`);
+    actions.push(`<button class="ghost tiny" onclick="copyText('${escapeHtml(a.share_url)}')">复制链接</button>`);
+  }
+  if (a.uri && a.uri.startsWith('http')) {
+    actions.push(`<a href="${escapeHtml(a.uri)}" target="_blank" rel="noopener">
+      <button class="ghost tiny">查看源</button></a>`);
+  }
+  if (canPreview(a)) {
+    actions.push(`<button class="ghost tiny" onclick="togglePreview('${escapeHtml(a.artifact_id)}')">预览</button>`);
+  }
+  const sizeHint = a.metadata && (a.metadata.size_bytes || a.metadata.bytes);
+  const slideCount = a.metadata && (a.metadata.slide_count || a.metadata.pages);
+  const subParts = [
+    badge(ARTIFACT_STATUS, a.status),
+    `<span class="badge muted">v${a.artifact_version}</span>`,
+  ];
+  if (slideCount) subParts.push(`<span class="badge muted">${slideCount} 页</span>`);
+  if (sizeHint) subParts.push(`<span class="badge muted">${formatBytes(sizeHint)}</span>`);
+  return `
+    <div class="artifact" data-art="${escapeHtml(a.artifact_id)}">
+      <div class="head">
+        <div class="icon">${meta.icon}</div>
+        <div style="flex:1;min-width:0">
+          <div class="title" title="${escapeHtml(a.title)}">${escapeHtml(a.title || meta.label)}</div>
+          <div class="meta-line">${escapeHtml(meta.label)} · ${escapeHtml(fmtTime(a.updated_at))}</div>
+        </div>
+      </div>
+      <div class="row" style="gap:4px">${subParts.join(' ')}</div>
+      ${a.share_url ? `<div class="meta-line" title="${escapeHtml(a.share_url)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(a.share_url)}</div>` : ''}
+      <div class="preview-box" data-preview="${escapeHtml(a.artifact_id)}" style="display:none"></div>
+      <div class="actions">${actions.join(' ')}</div>
+    </div>
+  `;
+}
+
+function canPreview(a) {
+  if (!a) return false;
+  return ['project_brief_md', 'summary', 'slide_spec_json', 'context_bundle']
+    .includes(a.type);
+}
+
+async function togglePreview(artifactId) {
+  const box = document.querySelector(`[data-preview="${cssEsc(artifactId)}"]`);
+  if (!box) return;
+  if (box.style.display !== 'none' && box.dataset.loaded === '1') {
+    box.style.display = 'none';
+    return;
+  }
+  if (box.dataset.loaded !== '1') {
+    box.textContent = '加载中…';
+    box.style.display = 'block';
+    try {
+      const r = await fetch(`${API}/artifacts/${encodeURIComponent(artifactId)}/content?max_bytes=8192`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      let text;
+      if (data.kind === 'json') {
+        text = JSON.stringify(data.content, null, 2);
+      } else if (data.kind === 'text') {
+        text = data.content || '';
+      } else {
+        text = '（不支持预览的内容类型：' + (data.kind || '?') + '）';
+      }
+      if (data.truncated) text += '\n\n…（已截断，仅预览前 8 KB）';
+      box.textContent = text || '（空内容）';
+      box.dataset.loaded = '1';
+    } catch (e) {
+      box.textContent = '预览失败：' + (e.message || e);
+    }
+  } else {
+    box.style.display = 'block';
+  }
+}
+
+function cssEsc(s) {
+  return (s || '').replace(/["\\]/g, '\\$&');
+}
+
+function copyText(s) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(s).then(
+      () => toast('已复制到剪贴板', 'ok'),
+      () => toast('复制失败', 'err'),
+    );
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = s; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast('已复制', 'ok'); }
+    catch { toast('复制失败', 'err'); }
+    finally { ta.remove(); }
+  }
+}
+
+function formatBytes(n) {
+  n = Number(n);
+  if (!isFinite(n)) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1024 / 1024).toFixed(2) + ' MB';
+}
+
+function renderEvents(d) {
+  const events = d.recent_events || [];
+  if (!events.length) {
+    return `<section class="card"><h3>最近事件</h3>
+      <div class="empty">还没有事件。</div></section>`;
+  }
+  // 倒序展示最新在前；只显示后 30 条
+  const slice = events.slice(-30).reverse();
+  const items = slice.map(ev => `
+    <div class="event lvl-${escapeHtml(ev.level || 'info')}">
+      <span class="ts">${escapeHtml(fmtTimeShort(ev.created_at))}</span>
+      <div>
+        <span class="label">${escapeHtml(EVENT_LABELS[ev.type] || ev.type)}</span>
+        <span class="msg">${escapeHtml(ev.message || '')}</span>
+      </div>
+    </div>
+  `).join('');
+  return `<section class="card">
+    <h3>最近事件 <span class="meta" id="liveTickerHint" style="text-transform:none;letter-spacing:0">实时刷新</span></h3>
+    <div class="events" id="eventList">${items}</div>
+  </section>`;
+}
+
+// ── 操作 ─────────────────────────────────────────
 async function decide(approvalId, decision) {
-  const actor = document.getElementById("actor").value || "dashboard-user";
-  const r = await fetch(`${API}/approvals/${approvalId}/decision`, {
-    method: "POST", headers: {"content-type":"application/json"},
-    body: JSON.stringify({decision, actor_id: actor, run_after_approval: true}),
-  });
-  if (!r.ok) { alert(await r.text()); return; }
+  const actor = (document.getElementById('actor').value || 'dashboard-user').trim();
+  try {
+    const r = await fetch(`${API}/approvals/${approvalId}/decision`, {
+      method: 'POST',
+      headers: {'content-type':'application/json'},
+      body: JSON.stringify({decision, actor_id: actor, run_after_approval: true}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast(decision === 'approve' ? '已同意，任务继续执行' : '已拒绝', 'ok');
+  } catch (e) {
+    toast('审批失败：' + (e.message || e), 'err');
+    return;
+  }
   await loadDetail(); await loadTasks();
 }
 
 async function retry() {
-  const actor = document.getElementById("actor").value || "dashboard-user";
-  // 使用 retry-from-first-failed-step；M2 简化：取第一个 failed step。
+  const actor = (document.getElementById('actor').value || 'dashboard-user').trim();
   const d = await fetch(`${API}/tasks/${selectedTaskId}`).then(r => r.json());
-  const step = (d.steps || []).find(s => s.status === "failed");
-  if (!step) { alert("没有 failed step"); return; }
-  const r = await fetch(
-    `${API}/tasks/${selectedTaskId}/steps/${step.step_id}/retry`,
-    {method:"POST", headers:{"content-type":"application/json"},
-     body: JSON.stringify({requester_id: actor, auto_approve: false})});
-  if (!r.ok) { alert(await r.text()); return; }
-  const handle = await r.json();
-  await selectTask(handle.task_id);
+  const step = (d.steps || []).find(s => s.status === 'failed' || s.status === 'retryable_failed');
+  if (!step) { toast('没有失败的步骤可重试', 'err'); return; }
+  try {
+    const r = await fetch(`${API}/tasks/${selectedTaskId}/steps/${step.step_id}/retry`, {
+      method: 'POST', headers: {'content-type':'application/json'},
+      body: JSON.stringify({requester_id: actor, auto_approve: false}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const handle = await r.json();
+    toast('已发起重试任务', 'ok');
+    await selectTask(handle.task_id);
+  } catch (e) { toast('重试失败：' + (e.message || e), 'err'); }
 }
 
 async function recoverFrom(stepId) {
-  const actor = document.getElementById("actor").value || "dashboard-user";
-  const r = await fetch(
-    `${API}/tasks/${selectedTaskId}/steps/${stepId}/retry`,
-    {method:"POST", headers:{"content-type":"application/json"},
-     body: JSON.stringify({requester_id: actor, auto_approve: false})});
-  if (!r.ok) { alert(await r.text()); return; }
-  const handle = await r.json();
-  await selectTask(handle.task_id);
+  const actor = (document.getElementById('actor').value || 'dashboard-user').trim();
+  try {
+    const r = await fetch(`${API}/tasks/${selectedTaskId}/steps/${stepId}/retry`, {
+      method: 'POST', headers: {'content-type':'application/json'},
+      body: JSON.stringify({requester_id: actor, auto_approve: false}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const handle = await r.json();
+    toast('已发起恢复任务', 'ok');
+    await selectTask(handle.task_id);
+  } catch (e) { toast('恢复失败：' + (e.message || e), 'err'); }
 }
 
+async function resumeTask(taskId) {
+  try {
+    const r = await fetch(`${API}/tasks/${taskId}/resume`, {method: 'POST'});
+    if (!r.ok) throw new Error(await r.text());
+    toast('已继续执行', 'ok');
+  } catch (e) { toast('继续失败：' + (e.message || e), 'err'); return; }
+  await loadDetail(); await loadTasks();
+}
+
+// ── SSE 实时事件 ─────────────────────────────────
 function startStream() {
-  if (evtSource) evtSource.close();
-  document.getElementById("events").innerHTML = "";
+  if (evtSource) { try { evtSource.close(); } catch {} }
+  if (!selectedTaskId) return;
   evtSource = new EventSource(`${API}/tasks/${selectedTaskId}/events`);
+  setLive(true);
+  lastLiveAt = Date.now();
+  if (liveTimer) clearInterval(liveTimer);
+  liveTimer = setInterval(() => {
+    if (Date.now() - lastLiveAt > 30000) setLive(false);
+  }, 5000);
   evtSource.onmessage = (m) => {
-    const data = JSON.parse(m.data);
-    if (data.type === "event") {
-      const li = document.createElement("li");
-      const ev = data.event;
-      li.textContent = `#${data.sequence} ${ev.type} — ${ev.message || ''}`;
-      document.getElementById("events").prepend(li);
-      // 追加事件后刷新一下详情（debounced 简化为直接 reload）
-      loadDetail();
-    } else if (data.type === "heartbeat") {
-      // ignore
-    } else if (data.type === "backfill_done") {
-      const li = document.createElement("li");
-      li.textContent = `— backfill done (latest=${data.latest_sequence}) —`;
-      document.getElementById("events").prepend(li);
+    lastLiveAt = Date.now();
+    setLive(true);
+    let data;
+    try { data = JSON.parse(m.data); } catch { return; }
+    if (data.type === 'event') {
+      prependLiveEvent(data.event);
+      scheduleDetailReload();
+    } else if (data.type === 'heartbeat') {
+      // 心跳不刷新详情
+    } else if (data.type === 'backfill_done') {
+      // 静默
     }
   };
-  evtSource.onerror = () => { /* 浏览器会自动重连 */ };
+  evtSource.onerror = () => { setLive(false); };
 }
 
+function prependLiveEvent(ev) {
+  const list = document.getElementById('eventList');
+  if (!list) return;
+  const div = document.createElement('div');
+  div.className = `event lvl-${ev.level || 'info'}`;
+  div.innerHTML = `
+    <span class="ts">${escapeHtml(fmtTimeShort(ev.created_at))}</span>
+    <div>
+      <span class="label">${escapeHtml(EVENT_LABELS[ev.type] || ev.type)}</span>
+      <span class="msg">${escapeHtml(ev.message || '')}</span>
+    </div>
+  `;
+  list.insertBefore(div, list.firstChild);
+  // 限长
+  while (list.children.length > 60) list.removeChild(list.lastChild);
+}
+
+// ── 初始化 ───────────────────────────────────────
+document.getElementById('menuBtn').addEventListener('click', () => {
+  document.getElementById('sidebar').classList.toggle('open');
+});
+
 loadTasks();
+// 周期性刷新任务列表，便于评委在不点的情况下看到状态变化
+setInterval(loadTasks, 15000);
 </script>
 </body>
 </html>

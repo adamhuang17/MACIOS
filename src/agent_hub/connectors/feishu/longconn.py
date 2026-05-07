@@ -38,6 +38,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from agent_hub.connectors.feishu.models import FeishuWebhookOutcome
+
 if TYPE_CHECKING:
     from agent_hub.connectors.feishu.service import FeishuWebhookService
 
@@ -100,6 +102,78 @@ def _to_webhook_dict(data: Any) -> dict[str, Any] | None:  # noqa: ANN401
             },
         },
     }
+
+
+def _to_card_action_dict(data: Any) -> dict[str, Any] | None:  # noqa: ANN401
+    """把 lark-oapi ``P2CardActionTrigger`` 事件对象转成内部 payload dict。
+
+    输出 schema 与 :func:`agent_hub.connectors.feishu.webhook._normalize_card_callback`
+    期望一致：``header.event_type=card.action.trigger``、
+    ``event.action.value`` 含 ``approval_id`` / ``decision``、
+    ``event.operator.open_id``、``event.context.open_chat_id`` /
+    ``open_message_id``。
+    """
+    header = getattr(data, "header", None)
+    event = getattr(data, "event", None)
+    if header is None or event is None:
+        return None
+
+    operator = getattr(event, "operator", None) or object()
+    action = getattr(event, "action", None) or object()
+    context = getattr(event, "context", None) or object()
+
+    raw_value = getattr(action, "value", None)
+    if isinstance(raw_value, dict):
+        value_dict: dict[str, Any] = dict(raw_value)
+    elif raw_value is None:
+        value_dict = {}
+    else:
+        # SDK 偶尔会用对象表达 value；尽力转成 dict。
+        value_dict = {
+            k: getattr(raw_value, k)
+            for k in dir(raw_value)
+            if not k.startswith("_") and not callable(getattr(raw_value, k))
+        }
+
+    return {
+        "header": {
+            "event_id": getattr(header, "event_id", ""),
+            # SDK 事件类型可能是 ``p2.card.action.trigger``；统一归一化为
+            # 开放平台 webhook 的 ``card.action.trigger``，让下游解析逻辑
+            # 不需要再判断两种命名。
+            "event_type": "card.action.trigger",
+            "tenant_key": getattr(header, "tenant_key", ""),
+            "app_id": getattr(header, "app_id", ""),
+            "token": "",
+        },
+        "event": {
+            "operator": {
+                "open_id": getattr(operator, "open_id", ""),
+                "union_id": getattr(operator, "union_id", ""),
+                "user_id": getattr(operator, "user_id", ""),
+                "tenant_key": getattr(operator, "tenant_key", ""),
+            },
+            "action": {
+                "tag": getattr(action, "tag", ""),
+                "value": value_dict,
+            },
+            "context": {
+                "open_chat_id": getattr(context, "open_chat_id", ""),
+                "open_message_id": getattr(context, "open_message_id", ""),
+            },
+        },
+    }
+
+
+def _to_event_dict(data: Any) -> dict[str, Any] | None:  # noqa: ANN401
+    """根据 SDK 事件 header 自动选择转换器。"""
+    header = getattr(data, "header", None)
+    if header is None:
+        return None
+    event_type = str(getattr(header, "event_type", "") or "")
+    if event_type.endswith("card.action.trigger"):
+        return _to_card_action_dict(data)
+    return _to_webhook_dict(data)
 
 
 # ── 长连接客户端 ──────────────────────────────────────
@@ -178,29 +252,82 @@ class FeishuLongConnClient:
         使 ``ws.Client.start()`` 不再与 uvicorn 主循环冲突。
         """
         import lark_oapi as lark
+        from lark_oapi.event.callback.model.p2_card_action_trigger import (
+            P2CardActionTriggerResponse,
+        )
         from lark_oapi.ws import client as _ws_mod
 
         thread_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(thread_loop)
         _ws_mod.loop = thread_loop
 
-        def _handle_im(data: Any) -> None:  # noqa: ANN401
-            payload = _to_webhook_dict(data)
-            if payload is None:
-                logger.warning("feishu.longconn.unparseable_event")
-                return
+        def _dispatch_payload(
+            payload: dict[str, Any], event_kind: str,
+        ) -> Any:  # noqa: ANN401
+            """把内部 payload 投递给 service，返回 FeishuAckResult 或 None。"""
             future = asyncio.run_coroutine_threadsafe(
                 self._service.handle_event_dict(payload),
                 main_loop,
             )
             try:
-                future.result(timeout=30)
+                return future.result(timeout=30)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("feishu.longconn.event_error", error=str(exc))
+                logger.warning(
+                    "feishu.longconn.event_error",
+                    event_kind=event_kind,
+                    error=str(exc),
+                )
+                return None
+
+        def _handle_im(data: Any) -> None:  # noqa: ANN401
+            payload = _to_webhook_dict(data)
+            if payload is None:
+                logger.warning("feishu.longconn.unparseable_event", event_kind="im")
+                return
+            _dispatch_payload(payload, "im.message.receive_v1")
+
+        def _handle_card_action(data: Any) -> Any:  # noqa: ANN401
+            payload = _to_card_action_dict(data)
+            if payload is None:
+                logger.warning(
+                    "feishu.longconn.unparseable_event",
+                    event_kind="card.action.trigger",
+                )
+                return _build_card_toast_response(
+                    P2CardActionTriggerResponse,
+                    success=False,
+                    message="审批解析失败，请到 Dashboard 操作",
+                )
+
+            result = _dispatch_payload(payload, "card.action.trigger")
+            outcome = getattr(result, "outcome", None)
+            reason = getattr(result, "reason", None)
+            card_to_replace = getattr(result, "card_to_replace", None)
+
+            if outcome is FeishuWebhookOutcome.CARD_CALLBACK and result is not None and \
+                    getattr(result, "approval_decision", None):
+                return _build_card_toast_response(
+                    P2CardActionTriggerResponse,
+                    success=True,
+                    message="审批已提交",
+                    card=card_to_replace,
+                )
+            if outcome is FeishuWebhookOutcome.DUPLICATE:
+                return _build_card_toast_response(
+                    P2CardActionTriggerResponse,
+                    success=True,
+                    message="审批已处理，请在 Dashboard 查看",
+                )
+            return _build_card_toast_response(
+                P2CardActionTriggerResponse,
+                success=False,
+                message=reason or "审批处理失败，请到 Dashboard 操作",
+            )
 
         event_handler = (
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(_handle_im)
+            .register_p2_card_action_trigger(_handle_card_action)
             .build()
         )
         ws_client = lark.ws.Client(
@@ -216,3 +343,32 @@ class FeishuLongConnClient:
                 logger.error("feishu.longconn.client_error", error=str(exc))
         finally:
             self._ws_client = None
+
+
+def _build_card_toast_response(
+    response_cls: Any,  # noqa: ANN401
+    *,
+    success: bool,
+    message: str,
+    card: dict[str, Any] | None = None,
+) -> Any:  # noqa: ANN401
+    """构造飞书卡片回传交互的 toast 响应对象。
+
+    成功用 ``info``，失败用 ``error``；按钮点击后用户可见。
+    传入 ``card`` 时会同步请飞书客户端用新卡片覆盖原卡片，
+    避免 “UI 退回原始待审批状态”。
+    """
+    payload: dict[str, Any] = {
+        "toast": {
+            "type": "info" if success else "error",
+            "content": message,
+        },
+    }
+    if card is not None:
+        payload["card"] = {"type": "raw", "data": card}
+    try:
+        # 真实 SDK 类支持 dict 初始化（``__init__(self, d, ...)``）。
+        return response_cls(payload)
+    except TypeError:
+        # 兼容测试中的简化 stub：直接返回 dict。
+        return payload

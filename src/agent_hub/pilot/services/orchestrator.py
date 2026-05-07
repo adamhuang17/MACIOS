@@ -26,8 +26,10 @@ from agent_hub.pilot.domain.enums import (
 from agent_hub.pilot.domain.events import ExecutionEvent
 from agent_hub.pilot.domain.models import Task, Workspace
 from agent_hub.pilot.domain.state import transition
+from agent_hub.pilot.services.approval_notifier import ApprovalRequestNotifier
 from agent_hub.pilot.services.dto import RunResult, TaskHandle, TaskRequest
 from agent_hub.pilot.services.model_gateway import PlanContext
+from agent_hub.pilot.services.progress import TaskProgressReporter
 
 if TYPE_CHECKING:
     from agent_hub.pilot.services.approval import ApprovalService
@@ -47,12 +49,22 @@ class TaskOrchestrator:
         planning: PlanningService,
         approvals: ApprovalService,
         execution: ExecutionEngine,
+        approval_notifier: ApprovalRequestNotifier | None = None,
+        progress_reporter: TaskProgressReporter | None = None,
     ) -> None:
         self._repo = repository
         self._publisher = publisher
         self._planning = planning
         self._approvals = approvals
         self._execution = execution
+        self._approval_notifier = approval_notifier
+        self._progress = progress_reporter or TaskProgressReporter(publisher)
+
+    def set_approval_notifier(
+        self,
+        notifier: ApprovalRequestNotifier | None,
+    ) -> None:
+        self._approval_notifier = notifier
 
     async def submit(self, request: TaskRequest) -> TaskHandle:
         workspace = await self._get_or_create_workspace(request)
@@ -102,6 +114,12 @@ class TaskOrchestrator:
         # 真正创建 Task 快照
         task = candidate
         await self._repo.save(task, expected_version=None)
+        await self._progress.emit(
+            task,
+            "收到任务，开始执行",
+            phase="accepted",
+            payload={"kind": "received", "notify_feishu": False},
+        )
 
         # PLANNING
         task = transition(task, TaskAction.START_PLANNING)
@@ -118,7 +136,12 @@ class TaskOrchestrator:
             source_conversation_id=request.source_conversation_id,
             source_message_id=request.source_message_id,
         )
-        plan, _ = await self._planning.generate(task, plan_ctx)
+        async with self._progress.heartbeat(
+            task,
+            "Agent 正在进行任务编排",
+            phase="planning",
+        ):
+            plan, _ = await self._planning.generate(task, plan_ctx)
         task = task.model_copy(update={"plan_id": plan.plan_id})
         # plan_id 是非受控字段，用 expected_version=None 跳过版本检查
         await self._repo.save(task, expected_version=None)
@@ -129,11 +152,21 @@ class TaskOrchestrator:
                 plan, task, requester_id=request.requester_id,
             )
         else:
-            _, plan = await self._approvals.request_plan_approval(
-                plan, task, requester_id=request.requester_id,
+            approval, plan = await self._approvals.request_plan_approval(
+                plan,
+                task,
+                requester_id=request.requester_id,
+                approvers=[request.requester_id],
             )
+            await self._notify_requested_approval(approval)
             task = transition(task, TaskAction.REQUEST_APPROVAL)
             await self._repo.save(task)
+            await self._progress.emit(
+                task,
+                "计划已生成，等待审批",
+                phase="awaiting_approval",
+                plan_id=plan.plan_id,
+            )
             return TaskHandle(
                 workspace_id=workspace.workspace_id,
                 task_id=task.task_id,
@@ -147,6 +180,12 @@ class TaskOrchestrator:
         await self._repo.save(task)
         task = transition(task, TaskAction.APPROVE)
         await self._repo.save(task)
+        await self._progress.emit(
+            task,
+            "计划已自动审批，开始执行",
+            phase="execution",
+            plan_id=plan.plan_id,
+        )
 
         result = await self._execution.run_plan(task, plan)
         return TaskHandle(
@@ -172,7 +211,37 @@ class TaskOrchestrator:
 
         task = transition(task, TaskAction.APPROVE)
         await self._repo.save(task)
+        await self._progress.emit(
+            task,
+            "审批已通过，开始执行",
+            phase="execution",
+            plan_id=plan.plan_id,
+        )
         return await self._execution.run_plan(task, plan)
+
+    async def resume_after_step_approval(self, task_id: str) -> RunResult:
+        """在 step 审批通过后，于同一 task / plan 上恢复执行。
+
+        要求 task 当前为 BLOCKED；状态机内部会做 BLOCKED → RUNNING 迁移。
+        plan 必须存在且属于该 task。
+        """
+        task = await self._repo.get_task(task_id)
+        if task is None:
+            msg = f"未知 task: {task_id}"
+            raise LookupError(msg)
+        if task.plan_id is None:
+            msg = f"task {task_id} 没有关联 plan"
+            raise ValueError(msg)
+        plan = await self._repo.get_plan(task.plan_id)
+        if plan is None:
+            msg = f"未知 plan: {task.plan_id}"
+            raise LookupError(msg)
+        if plan.task_id != task.task_id:
+            msg = (
+                f"plan {plan.plan_id} 不属于 task {task.task_id}，无法 resume"
+            )
+            raise ValueError(msg)
+        return await self._execution.resume_plan(task, plan)
 
     # ── helpers ────────────────────────────────────
 
@@ -208,6 +277,18 @@ class TaskOrchestrator:
             return f"msg:{request.source_channel}:{request.source_message_id}"
         # 无外部唯一标识时，每次请求生成新 key（不去重）
         return f"auto:{uuid.uuid4().hex}"
+
+    async def _notify_requested_approval(self, approval) -> None:  # noqa: ANN001
+        if self._approval_notifier is None:
+            return
+        try:
+            await self._approval_notifier.notify_requested(approval)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "pilot.approval_notify_failed",
+                approval_id=approval.approval_id,
+                error=str(exc),
+            )
 
 
 __all__ = ["TaskOrchestrator"]

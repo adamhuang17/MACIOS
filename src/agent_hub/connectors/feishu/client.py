@@ -5,6 +5,7 @@
 - ``send_message``        —— ``POST /open-apis/im/v1/messages``
 - ``fetch_recent_messages`` —— ``GET  /open-apis/im/v1/messages``
 - ``upload_file``          —— ``POST /open-apis/drive/v1/files/upload_all``
+- ``share_file``           —— ``POST /open-apis/drive/v1/permissions/{token}/members``
 - ``create_doc``           —— ``POST /open-apis/docx/v1/documents``
 
 为了让 skills / 测试不依赖真实 HTTP，本模块同时定义
@@ -142,6 +143,15 @@ class FeishuClientProtocol(Protocol):
         card: dict[str, Any],
     ) -> None: ...
 
+    async def share_file(
+        self,
+        *,
+        file_token: str,
+        member_open_id: str,
+        perm: str = "edit",
+        need_notification: bool = True,
+    ) -> None: ...
+
     async def aclose(self) -> None: ...
 
 
@@ -254,6 +264,25 @@ class FakeFeishuClient:
             }
         )
         return created
+
+    shared_files: list[dict[str, Any]] = field(default_factory=list)
+
+    async def share_file(
+        self,
+        *,
+        file_token: str,
+        member_open_id: str,
+        perm: str = "edit",
+        need_notification: bool = True,
+    ) -> None:
+        self.shared_files.append(
+            {
+                "file_token": file_token,
+                "member_open_id": member_open_id,
+                "perm": perm,
+                "need_notification": need_notification,
+            }
+        )
 
     async def aclose(self) -> None:  # pragma: no cover - no-op
         return None
@@ -451,6 +480,34 @@ class FeishuClient:
             size=len(content),
             folder_token=parent_node,
             download_url=data.get("download_url"),
+        )
+
+    async def share_file(
+        self,
+        *,
+        file_token: str,
+        member_open_id: str,
+        perm: str = "edit",
+        need_notification: bool = True,
+    ) -> None:
+        """为已上传的云空间文件添加协作者权限。
+
+        ``need_notification=True`` 时飞书会主动给 ``member_open_id`` 发一条
+        包含可点击链接的“与我共享”通知，这是机器人让用户拿到文件链接
+        的官方推荐路径。
+        """
+        await self._request_json(
+            "POST",
+            f"/open-apis/drive/v1/permissions/{file_token}/members",
+            params={
+                "type": "file",
+                "need_notification": "true" if need_notification else "false",
+            },
+            json_body={
+                "member_type": "openid",
+                "member_id": member_open_id,
+                "perm": perm,
+            },
         )
 
     async def create_doc(

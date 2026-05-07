@@ -22,6 +22,8 @@ import json
 from io import BytesIO
 from typing import Any
 
+import structlog
+
 from agent_hub.connectors.feishu.client import FeishuApiError, FeishuClientProtocol
 from agent_hub.pilot.domain.enums import ArtifactType
 from agent_hub.pilot.skills.internal import ArtifactContentReader
@@ -33,6 +35,7 @@ from agent_hub.pilot.skills.registry import (
 )
 
 REAL_CHAIN_SCOPES = ["pilot", "pilot.real_chain"]
+logger = structlog.get_logger(__name__)
 
 
 # ── real.slide.generate_spec ───────────────────────
@@ -251,6 +254,8 @@ def _make_real_upload_share_skill(
     *,
     artifact_reader: ArtifactContentReader,
     default_folder_token: str = "",
+    admin_open_id: str = "",
+    drive_url_template: str = "https://www.feishu.cn/file/{file_token}",
 ) -> tuple[SkillSpec, Any]:
     async def _upload(inv: SkillInvocation) -> SkillResult:
         params = inv.params
@@ -258,11 +263,18 @@ def _make_real_upload_share_skill(
         folder_token = str(params.get("folder_token", "") or default_folder_token) or None
 
         upstream = params.get("input_artifacts", {}) or {}
-        pptx_artifact = upstream.get("pptx") or upstream.get("file")
+        # 兼容 PPTX / 任意文件 / Brief Markdown / Doc 上游，让该 skill 可以复用为
+        # DOC_ONLY plan 的交付环节。
+        source_artifact = (
+            upstream.get("pptx")
+            or upstream.get("file")
+            or upstream.get("brief")
+            or upstream.get("doc")
+        )
 
         content_bytes: bytes | None = None
-        if isinstance(pptx_artifact, dict):
-            raw = pptx_artifact.get("content")
+        if isinstance(source_artifact, dict):
+            raw = source_artifact.get("content")
             if isinstance(raw, bytes):
                 content_bytes = raw
             elif isinstance(raw, str):
@@ -279,7 +291,7 @@ def _make_real_upload_share_skill(
             return SkillResult(
                 skill_name=inv.skill_name,
                 success=False,
-                error="real.drive.upload_share 需要 input_artifacts.pptx",
+                error="real.drive.upload_share 需要 input_artifacts.pptx / brief / doc / file",
             )
 
         if inv.dry_run:
@@ -303,10 +315,26 @@ def _make_real_upload_share_skill(
         except FeishuApiError as exc:
             return SkillResult(skill_name=inv.skill_name, success=False, error=str(exc))
 
-        # 骨架：share_url 暂用 download_url；后续接 Drive permissions API
-        # 调 ``POST /open-apis/drive/v1/permissions/{file_token}/public`` 转为
-        # 公开链接，再覆写 share_url。
-        share_url = uploaded.download_url or ""
+        share_url = (uploaded.download_url or "").strip()
+        # 飞书 Drive upload_all 实际并不返回稳定可访问 URL，需要基于 file_token 兜底拼接。
+        if not share_url and uploaded.file_token and drive_url_template:
+            try:
+                share_url = drive_url_template.format(file_token=uploaded.file_token)
+            except (KeyError, IndexError):
+                share_url = ""
+
+        # 上传成功后自动将文件分享给管理员协作者
+        # need_notification=True 让飞书主动发一条带可点击链接的"与我共享"通知。
+        if admin_open_id and uploaded.file_token:
+            try:
+                await client.share_file(
+                    file_token=uploaded.file_token,
+                    member_open_id=admin_open_id,
+                    perm="edit",
+                    need_notification=True,
+                )
+            except FeishuApiError:
+                logger.warning("drive_share_failed", file_token=uploaded.file_token)
 
         return SkillResult(
             skill_name=inv.skill_name,
@@ -328,8 +356,10 @@ def _make_real_upload_share_skill(
                 },
                 "metadata": {
                     "file_token": uploaded.file_token,
+                    "feishu_token": uploaded.file_token,
                     "byte_size": uploaded.size,
                     "folder_token": folder_token or "",
+                    "share_url": share_url,
                 },
             },
         )
@@ -356,6 +386,8 @@ def register_real_chain_skills(
     feishu_client: FeishuClientProtocol | None = None,
     artifact_reader: ArtifactContentReader | None = None,
     default_folder_token: str = "",
+    admin_open_id: str = "",
+    drive_url_template: str = "https://www.feishu.cn/file/{file_token}",
     allow_overwrite: bool = False,
 ) -> None:
     """注册真实产物链 skills。
@@ -374,6 +406,8 @@ def register_real_chain_skills(
             feishu_client,
             artifact_reader=artifact_reader,
             default_folder_token=default_folder_token,
+            admin_open_id=admin_open_id,
+            drive_url_template=drive_url_template,
         )
         registry.register(spec, fn, allow_overwrite=allow_overwrite)
 

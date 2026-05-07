@@ -54,6 +54,19 @@ _PROMOTE_BY_KIND: dict[PlanStepKind, list[ArtifactAction]] = {
 }
 
 
+def _promotion_actions(
+    step_kind: PlanStepKind,
+    artifact_type: ArtifactType,
+) -> list[ArtifactAction]:
+    actions = list(_PROMOTE_BY_KIND.get(step_kind, []))
+    if artifact_type is ArtifactType.SHARE_LINK:
+        if ArtifactAction.UPLOAD not in actions:
+            actions.append(ArtifactAction.UPLOAD)
+        if ArtifactAction.SHARE not in actions:
+            actions.append(ArtifactAction.SHARE)
+    return actions
+
+
 _MEMORY_SCHEME = "memory://"
 
 
@@ -154,7 +167,7 @@ class ArtifactStore:
         await self._emit_status(artifact, step, task)
 
         # 根据 step kind 继续晋升（UPLOAD / SHARE）
-        for action in _PROMOTE_BY_KIND.get(step.kind, []):
+        for action in _promotion_actions(step.kind, artifact.type):
             artifact = transition(artifact, action)
             await self._repo.save(artifact)
             await self._emit_status(artifact, step, task)

@@ -74,6 +74,12 @@ class PilotCommandService:
                 "不能再次决议"
             )
             raise CommandError(msg)
+        if approval.approvers and actor_id not in approval.approvers:
+            msg = (
+                f"actor_id={actor_id} 不在审批人名单内，"
+                f"不能决议 approval {approval_id}"
+            )
+            raise CommandError(msg)
 
         if approval.target_type == ApprovalTargetType.PLAN:
             return await self._decide_plan(
@@ -89,6 +95,7 @@ class PilotCommandService:
                 decision=decision,
                 actor_id=actor_id,
                 comment=comment,
+                run_after_approval=run_after_approval,
             )
         msg = f"M2 暂不支持 target_type={approval.target_type.value}"
         raise CommandError(msg)
@@ -220,6 +227,7 @@ class PilotCommandService:
         decision: Decision,
         actor_id: str,
         comment: str | None,
+        run_after_approval: bool,
     ) -> dict[str, object]:
         step = await self._repo.get_step(approval.target_id)
         if step is None:
@@ -236,18 +244,80 @@ class PilotCommandService:
             approver_id=actor_id,
             comment=comment,
         )
-        return {
+
+        result_payload: dict[str, object] = {
             "approval_id": new_approval.approval_id,
             "approval_status": new_approval.status.value,
             "step_id": new_step.step_id,
             "step_status": new_step.status.value,
             "task_id": task.task_id,
-            "note": (
-                "step approved；M2 不在原 task 上自动续跑，"
-                "请通过 recovery task 重启执行链路"
-                if decision == "approve" else
-                "step rejected"
-            ),
+        }
+
+        if decision == "approve":
+            if run_after_approval:
+                run_result = await self._orchestrator.resume_after_step_approval(
+                    task.task_id,
+                )
+                result_payload.update(
+                    task_status=run_result.final_status.value,
+                    run_result=_summarize_run(run_result),
+                    note="step approved，已在原 task 上续跑",
+                )
+            else:
+                latest_task = await self._repo.get_task(task.task_id) or task
+                result_payload.update(
+                    task_status=latest_task.status.value,
+                    note="step approved；run_after_approval=false，等待手动 resume",
+                )
+            return result_payload
+
+        # decision == "reject"：把当前 task 明确转为 failed
+        latest_task = await self._repo.get_task(task.task_id) or task
+        try:
+            failed = transition(latest_task, TaskAction.FAIL, patch={
+                "error": "step rejected by approver",
+            })
+        except IllegalTransition:
+            failed = latest_task
+        else:
+            await self._repo.save(failed)
+            await self._publisher.record(ExecutionEvent(
+                workspace_id=failed.workspace_id,
+                trace_id=failed.trace_id,
+                task_id=failed.task_id,
+                plan_id=new_step.plan_id,
+                step_id=new_step.step_id,
+                approval_id=new_approval.approval_id,
+                type=EventType.TASK_FAILED,
+                level=EventLevel.WARN,
+                message="task failed: step rejected",
+                payload={"status": failed.status.value},
+                actor_id=actor_id,
+            ))
+        result_payload.update(
+            task_status=failed.status.value,
+            note="step rejected，task 已终止",
+        )
+        return result_payload
+
+    # ── 手动 resume ───────────────────────────────
+
+    async def resume_task(self, task_id: str) -> dict[str, object]:
+        """在已 BLOCKED 的 task 上手动续跑（兼容历史 approved-but-not-resumed 数据）。"""
+        task = await self._repo.get_task(task_id)
+        if task is None:
+            msg = f"unknown task: {task_id}"
+            raise LookupError(msg)
+        if task.status != TaskStatus.BLOCKED:
+            msg = (
+                f"task {task_id} 当前 status={task.status.value}，无需 resume"
+            )
+            raise CommandError(msg)
+        run_result = await self._orchestrator.resume_after_step_approval(task_id)
+        return {
+            "task_id": task_id,
+            "task_status": run_result.final_status.value,
+            "run_result": _summarize_run(run_result),
         }
 
 

@@ -163,6 +163,7 @@ class ApprovalService:
         task: Task,
         *,
         requester_id: str,
+        approvers: list[str] | None = None,
     ) -> tuple[Approval, PlanStep]:
         approval = Approval(
             workspace_id=step.workspace_id,
@@ -170,6 +171,7 @@ class ApprovalService:
             target_type=ApprovalTargetType.STEP,
             target_id=step.step_id,
             requester_id=requester_id,
+            approvers=list(approvers or []),
             status=ApprovalStatus.REQUESTED,
         )
         if step.status not in (

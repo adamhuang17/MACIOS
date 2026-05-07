@@ -154,6 +154,7 @@ class EventType(StrEnum):
     WORKSPACE_CREATED = "workspace.created"
     WORKSPACE_STATUS_CHANGED = "workspace.status_changed"
     TASK_CREATED = "task.created"
+    TASK_PROGRESS = "task.progress"
     TASK_STATUS_CHANGED = "task.status_changed"
     TASK_COMPLETED = "task.completed"
     TASK_FAILED = "task.failed"

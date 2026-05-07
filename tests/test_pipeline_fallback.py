@@ -12,7 +12,13 @@ from __future__ import annotations
 import pytest
 
 from agent_hub.core.enums import ExecutionMode
-from agent_hub.core.models import RoutingDecision, SubTask
+from agent_hub.core.models import (
+    AgentResult,
+    RoutingDecision,
+    SubTask,
+    TaskInput,
+    UserContext,
+)
 from agent_hub.core.pipeline import AgentPipeline
 from agent_hub.core.router import _SYSTEM_PROMPT
 
@@ -34,6 +40,9 @@ class TestPipelineFallback:
             llm_base_url="http://localhost:1234",
             obsidian_vault_path=str(tmp_path / "vault"),
             guard_enabled=False,
+            cache_enabled=False,
+            vector_memory_enabled=False,
+            rate_limiter_enabled=False,
         )
         with (
             patch("agent_hub.agents.llm_agent.Anthropic"),
@@ -117,6 +126,50 @@ class TestPipelineFallback:
         # 模拟 run() 中的条件判断
         should_fallback = not routing.plan and routing.mode != ExecutionMode.IGNORE
         assert should_fallback is False
+
+    @pytest.mark.asyncio
+    async def test_feishu_addressed_ignore_is_promoted_to_llm(
+        self,
+        pipeline: AgentPipeline,
+    ) -> None:
+        """飞书私聊普通问答被 Router 判 ignore 时，仍应由 LLM 回复。"""
+        from unittest.mock import AsyncMock, patch
+
+        pipeline._agents["llm_agent"].run = AsyncMock(return_value=AgentResult(
+            agent_name="llm_agent",
+            success=True,
+            output="我很好",
+            duration_ms=0,
+            trace_id="trace-feishu-qa",
+        ))
+        task_input = TaskInput(
+            trace_id="trace-feishu-qa",
+            user_context=UserContext(
+                user_id="ou_test",
+                role="user",
+                channel="feishu",
+                session_id="oc_chat",
+                is_private=True,
+            ),
+            raw_message="你好，这是一条测试内容，你需要回复我“我很好”",
+        )
+
+        with patch.object(
+            pipeline._router,
+            "route",
+            new_callable=AsyncMock,
+            return_value=RoutingDecision(
+                mode=ExecutionMode.IGNORE,
+                confidence=1.0,
+                reasoning="闲聊",
+                plan=[],
+            ),
+        ):
+            output = await pipeline.run(task_input)
+
+        assert output.status == "success"
+        assert output.response == "我很好"
+        pipeline._agents["llm_agent"].run.assert_awaited_once()
 
 
 class TestRouterPromptEnsuresSubtask:

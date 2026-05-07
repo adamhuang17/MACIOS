@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -31,6 +31,7 @@ from agent_hub.pilot.domain.enums import WorkspaceStatus
 from agent_hub.pilot.domain.models import Workspace
 from agent_hub.pilot.services.dto import PlanProfile, TaskHandle, TaskRequest
 from agent_hub.pilot.services.ingress import IngressIntent, PilotIngressService
+from agent_hub.pilot.skills.feishu_card import build_decision_card
 
 if TYPE_CHECKING:
     from agent_hub.pilot.services.commands import PilotCommandService
@@ -52,6 +53,9 @@ class FeishuAckResult:
     approval_decision: dict[str, object] | None = None
     intent: IngressIntent | None = None
     reply_message_id: str | None = None
+    # 在 ``card.action.trigger`` 回调中需要同步返回给飞书客户端的
+    # “决议后终态卡片”；为空时客户端会保留原卡片。
+    card_to_replace: dict[str, object] | None = None
 
 
 class FeishuWebhookService:
@@ -77,7 +81,7 @@ class FeishuWebhookService:
         client: FeishuClientProtocol | None = None,
         commands: PilotCommandService | None = None,
         ingress: PilotIngressService | None = None,
-        ack_template: str = "已收到任务，正在规划：{title}",
+        ack_template: str = "收到任务，开始执行，正在规划：{title}",
         send_ack: bool = True,
     ) -> None:
         self._processor = processor
@@ -146,11 +150,11 @@ class FeishuWebhookService:
                     reply_message_id=reply_id,
                 )
             # START_TASK fallthrough
+                ack_message_id = await self._maybe_ack(message)
             handle = await self._submit_task(
                 message,
                 plan_profile=decision.plan_profile,
             )
-            ack_message_id = await self._maybe_ack(message, handle)
             return FeishuAckResult(
                 outcome=FeishuWebhookOutcome.ACCEPTED,
                 handle=handle,
@@ -158,8 +162,8 @@ class FeishuWebhookService:
                 intent=decision.intent,
             )
 
+        ack_message_id = await self._maybe_ack(message)
         handle = await self._submit_task(message)
-        ack_message_id = await self._maybe_ack(message, handle)
         return FeishuAckResult(
             outcome=FeishuWebhookOutcome.ACCEPTED,
             handle=handle,
@@ -221,10 +225,62 @@ class FeishuWebhookService:
             decision=decision,
             actor_id=callback.operator_open_id,
         )
+        decision_card = await self._update_approval_card(
+            approval_id=callback.action_value.approval_id,
+            decision=decision,
+            actor_id=callback.operator_open_id or "feishu",
+            comment=callback.action_value.comment or "",
+        )
         return FeishuAckResult(
             outcome=FeishuWebhookOutcome.CARD_CALLBACK,
             approval_decision=outcome,
+            card_to_replace=decision_card,
         )
+
+    async def _update_approval_card(
+        self,
+        *,
+        approval_id: str,
+        decision: str,
+        actor_id: str,
+        comment: str,
+    ) -> dict[str, Any] | None:
+        """决议后用最终态卡片覆盖原来的审批卡片，并返回该卡片。
+
+        返回值会被 `card.action.trigger` 回调同步塑进响应 payload，
+        避免飞书客户端因“响应中未携带 card”而回退原卡片。
+        """
+        if self._client is None or self._repo is None:
+            return None
+        try:
+            approval = await self._repo.get_approval(approval_id)
+            if approval is None or not approval.channel_message_id:
+                return None
+            card = build_decision_card(
+                title=approval.reason or "审批请求",
+                summary=approval.preview or f"审批 {approval_id}",
+                decision=decision,
+                actor_id=actor_id,
+                comment=comment,
+            )
+            await self._client.update_card(
+                message_id=approval.channel_message_id,
+                card=card,
+            )
+            logger.info(
+                "feishu.card.updated_final_state",
+                approval_id=approval_id,
+                decision=decision,
+                message_id=approval.channel_message_id,
+            )
+            return card
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "feishu.card.update_failed",
+                approval_id=approval_id,
+                error=str(exc),
+            )
+            return None
 
     async def _submit_task(
         self,
@@ -290,11 +346,11 @@ class FeishuWebhookService:
     async def _maybe_ack(
         self,
         message: FeishuInboundMessage,
-        handle: TaskHandle,
+        handle: TaskHandle | None = None,
     ) -> str | None:
         if not self._send_ack or self._client is None:
             return None
-        if handle.deduplicated:
+        if handle is not None and handle.deduplicated:
             return None
         title = _derive_title(message)
         text = self._ack_template.format(title=title)

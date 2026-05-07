@@ -61,8 +61,8 @@ _current_trace_id: ContextVar[str] = ContextVar("trace_id", default="")
 def init_tracer(service_name: str = "agent-hub") -> _OTelTracer | None:
     """初始化全局追踪器。
 
-    优先使用 OTLP exporter（Jaeger/Zipkin），不可用时降级为
-    ConsoleSpanExporter；OTel SDK 未安装时仅使用 structlog。
+    仅当显式配置 ``OTEL_EXPORTER_OTLP_ENDPOINT`` 时启用 OTLP exporter；
+    否则仅使用 structlog，避免本地演示时默认连接 ``localhost:4317``。
 
     Args:
         service_name: 服务名称，用于 OTel resource 标识。
@@ -77,27 +77,38 @@ def init_tracer(service_name: str = "agent-hub") -> _OTelTracer | None:
 
         from opentelemetry.sdk.resources import Resource
 
+        if os.environ.get("OTEL_SDK_DISABLED"):
+            logger.info(
+                "tracer_initialized",
+                backend="structlog_only",
+                service=service_name,
+                reason="otel_disabled",
+            )
+            return None
+
+        if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+            logger.info(
+                "tracer_initialized",
+                backend="structlog_only",
+                service=service_name,
+                reason="otlp_endpoint_unset",
+            )
+            return None
+
         resource = Resource.create({"service.name": service_name})
         provider = TracerProvider(resource=resource)
 
-        # 优先 OTLP exporter（仅在非测试 / 未禁用时启用）
-        otlp_ok = False
-        if not os.environ.get("OTEL_SDK_DISABLED"):
-            try:
-                from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
-                    OTLPSpanExporter,
-                )
-                from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
-                provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-                logger.info("tracer_initialized", backend="otlp", service=service_name)
-                otlp_ok = True
-            except ImportError:
-                pass
-
-        if not otlp_ok:
+        try:
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+                OTLPSpanExporter,
+            )
+            from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        except ImportError:
             provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
             logger.info("tracer_initialized", backend="console", service=service_name)
+        else:
+            provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+            logger.info("tracer_initialized", backend="otlp", service=service_name)
 
         otel_trace.set_tracer_provider(provider)
         _otel_tracer = otel_trace.get_tracer(service_name)

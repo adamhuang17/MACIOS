@@ -36,6 +36,7 @@ from agent_hub.pilot.services.planning import (
     PlanningService,
     PlanTemplateError,
 )
+from agent_hub.pilot.services.progress import TaskProgressReporter
 from agent_hub.pilot.services.queries import (
     PilotQueryService,
     TaskDetail,
@@ -73,6 +74,7 @@ __all__ = [
     "TaskDetail",
     "TaskHandle",
     "TaskOrchestrator",
+    "TaskProgressReporter",
     "TaskRequest",
     "TaskSummary",
     "TemplatePlanGateway",

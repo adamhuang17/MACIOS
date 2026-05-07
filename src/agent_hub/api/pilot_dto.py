@@ -160,11 +160,23 @@ class RecoveryRequest(BaseModel):
     auto_approve: bool = False
 
 
+# ── 续跑任务 ────────────────────────────────────────
+
+
+class ResumeTaskResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    task_id: str
+    task_status: str
+    run_result: dict[str, Any] | None = None
+
+
 __all__ = [
     "ApprovalDecisionRequest",
     "ApprovalDecisionResponse",
     "ArtifactView",
     "RecoveryRequest",
+    "ResumeTaskResponse",
     "SubmitTaskRequest",
     "SubmitTaskResponse",
     "TaskDetailView",

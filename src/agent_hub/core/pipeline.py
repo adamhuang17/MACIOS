@@ -278,6 +278,8 @@ class AgentPipeline:
         # ── Step 1: 路由 ─────────────────────────────
         routing = await self._router.route(task_input.raw_message, user_ctx)
 
+        routing = self._promote_addressed_ignore(task_input, routing)
+
         if routing.mode == ExecutionMode.IGNORE or routing.low_confidence:
             yield {"type": "token", "content": self._build_fallback_response(routing)}
             return
@@ -424,6 +426,7 @@ class AgentPipeline:
                         task_input.raw_message,
                         user_ctx,
                     )
+                    routing = self._promote_addressed_ignore(task_input, routing)
                     root_span.add_event("routing_done", {
                         "mode": routing.mode.value,
                         "confidence": routing.confidence,
@@ -715,6 +718,45 @@ class AgentPipeline:
             depends_on=[],
         )
         return routing.model_copy(update={"plan": [default_subtask]})
+
+    @staticmethod
+    def _promote_addressed_ignore(
+        task_input: TaskInput,
+        routing: RoutingDecision,
+    ) -> RoutingDecision:
+        """飞书中明确发给机器人的消息，即使被 Router 判 ignore，也给出普通回复。"""
+        user_ctx = task_input.user_context
+        is_feishu_addressed = (
+            user_ctx.channel == "feishu"
+            and (user_ctx.is_private or task_input.is_at_bot)
+        )
+        if (
+            not is_feishu_addressed
+            or routing.mode != ExecutionMode.IGNORE
+            or routing.low_confidence
+        ):
+            return routing
+
+        logger.info(
+            "pipeline.addressed_ignore_promoted",
+            channel=user_ctx.channel,
+            is_private=user_ctx.is_private,
+            is_at_bot=task_input.is_at_bot,
+        )
+        default_subtask = SubTask(
+            subtask_id="subtask_addressed_reply_1",
+            description=task_input.raw_message,
+            required_agents=["llm_agent"],
+            priority=1,
+            depends_on=[],
+        )
+        return routing.model_copy(
+            update={
+                "mode": ExecutionMode.QA,
+                "reasoning": f"{routing.reasoning}; addressed feishu message promoted",
+                "plan": [default_subtask],
+            }
+        )
 
     @staticmethod
     def _elapsed_ms(start: float) -> int:

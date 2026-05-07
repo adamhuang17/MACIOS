@@ -158,6 +158,45 @@ async def test_send_message_encodes_text_payload() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_message_builds_summary_from_share_artifact() -> None:
+    client = FakeFeishuClient()
+    registry = _build_registry(client)
+
+    result = await registry.invoke(
+        SkillInvocation(
+            skill_name="feishu.im.send_message",
+            params={
+                "chat_id": "oc_1",
+                "title": "自我介绍 PPT 已完成",
+                "input_artifacts": {
+                    "share": {
+                        "artifact_id": "art-share",
+                        "type": "share_link",
+                        "title": "deck.pptx share link",
+                        "content": {
+                            "file_name": "deck.pptx",
+                            "share_url": "https://open.feishu.cn/share/demo",
+                            "file_token": "file_demo",
+                        },
+                        "metadata": {"file_token": "file_demo"},
+                    }
+                },
+            },
+        )
+    )
+
+    assert result.success is True
+    assert result.artifact_payload is not None
+    payload = json.loads(client.sent_messages[0]["content"])
+    assert payload["text"] == (
+        "自我介绍 PPT 已完成\n"
+        "分享链接：https://open.feishu.cn/share/demo\n"
+        "（飞书已单独推送一条「与我共享」通知，可直接点击打开）"
+    )
+    assert result.artifact_payload["content"] == payload["text"]
+
+
+@pytest.mark.asyncio
 async def test_fetch_recent_returns_context_bundle() -> None:
     client = FakeFeishuClient()
     # 注入一些历史消息

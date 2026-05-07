@@ -28,7 +28,9 @@ from agent_hub.pilot.domain.enums import (
 from agent_hub.pilot.domain.events import ExecutionEvent
 from agent_hub.pilot.domain.models import Plan, PlanStep, Task
 from agent_hub.pilot.domain.state import transition
+from agent_hub.pilot.services.approval_notifier import ApprovalRequestNotifier
 from agent_hub.pilot.services.dto import RunResult, StepExecution
+from agent_hub.pilot.services.progress import TaskProgressReporter
 from agent_hub.pilot.skills.registry import SkillInvocation
 
 if TYPE_CHECKING:
@@ -138,6 +140,8 @@ class ExecutionEngine:
         *,
         auto_approve_writes: bool = False,
         input_resolver: StepInputResolver | None = None,
+        approval_notifier: ApprovalRequestNotifier | None = None,
+        progress_reporter: TaskProgressReporter | None = None,
     ) -> None:
         self._repo = repository
         self._publisher = publisher
@@ -148,22 +152,140 @@ class ExecutionEngine:
         self._input_resolver = input_resolver or StepInputResolver(
             repository, artifacts,
         )
+        self._approval_notifier = approval_notifier
+        self._progress = progress_reporter or TaskProgressReporter(publisher)
+
+    def set_approval_notifier(
+        self,
+        notifier: ApprovalRequestNotifier | None,
+    ) -> None:
+        self._approval_notifier = notifier
 
     async def run_plan(self, task: Task, plan: Plan) -> RunResult:
-        steps = await self._repo.list_steps(plan.plan_id, workspace_id=plan.workspace_id)
-
+        """首次执行 plan：APPROVED -> RUNNING，按拓扑层执行所有 step。"""
         running_task = transition(task, TaskAction.START_RUNNING)
         await self._repo.save(running_task)
         await self._emit_task_status(running_task)
+        await self._progress.emit(
+            running_task,
+            "Agent 开始执行任务步骤",
+            phase="execution",
+            plan_id=plan.plan_id,
+        )
+        return await self._drive_and_finalize(running_task, plan)
 
-        executions: list[StepExecution] = []
+    async def resume_plan(self, task: Task, plan: Plan) -> RunResult:
+        """续跑已 BLOCKED 的 plan：UNBLOCK -> RUNNING，跳过终态/已审批门控，
+        继续执行剩余 pending/approved step。
+        """
+        if task.status != TaskStatus.BLOCKED:
+            msg = (
+                f"task {task.task_id} 当前 status={task.status.value}，"
+                "无法 resume，仅 BLOCKED 任务可恢复"
+            )
+            raise ValueError(msg)
+        running_task = transition(task, TaskAction.UNBLOCK)
+        await self._repo.save(running_task)
+        await self._emit_task_status(running_task)
+        await self._progress.emit(
+            running_task,
+            "任务已恢复，继续执行剩余步骤",
+            phase="execution",
+            plan_id=plan.plan_id,
+        )
+        return await self._drive_and_finalize(running_task, plan)
+
+    # ── 共享执行循环 ─────────────────────────────────
+
+    async def _drive_and_finalize(
+        self, running_task: Task, plan: Plan,
+    ) -> RunResult:
+        executions, any_failed, any_blocked = await self._drive_steps(
+            running_task, plan,
+        )
+
+        # 整理最终 task 状态
+        if any_failed:
+            final_task = transition(running_task, TaskAction.FAIL, patch={
+                "error": "one or more steps failed",
+            })
+            final_message = "任务失败，请查看失败步骤"
+            final_phase = "failed"
+        elif any_blocked:
+            final_task = transition(running_task, TaskAction.BLOCK)
+            final_message = "任务暂停，等待审批或恢复"
+            final_phase = "blocked"
+        else:
+            final_task = transition(running_task, TaskAction.SUCCEED, patch={
+                "final_summary": f"{len(executions)} steps succeeded",
+            })
+            final_message = "任务已完成，成果已生成"
+            final_phase = "completed"
+        await self._repo.save(final_task)
+        await self._emit_task_status(final_task)
+        await self._progress.emit(
+            final_task,
+            final_message,
+            phase=final_phase,
+            plan_id=plan.plan_id,
+        )
+
+        # 重新拉一遍快照供调用方使用
+        final_steps = await self._repo.list_steps(
+            plan.plan_id, workspace_id=plan.workspace_id,
+        )
+        artifacts = await self._repo.list_task_artifacts(
+            running_task.task_id, workspace_id=plan.workspace_id,
+        )
+        return RunResult(
+            task=final_task,
+            plan=plan,
+            steps=final_steps,
+            artifacts=artifacts,
+            executions=executions,
+            final_status=final_task.status,
+        )
+
+    async def _drive_steps(
+        self, running_task: Task, plan: Plan,
+    ) -> tuple[list[StepExecution], bool, bool]:
+        steps = await self._repo.list_steps(
+            plan.plan_id, workspace_id=plan.workspace_id,
+        )
         layers = _topological_layers(steps)
+        executions: list[StepExecution] = []
         any_failed = False
         any_blocked = False
 
         for layer in layers:
             for step in layer:
                 latest = await self._repo.get_step(step.step_id) or step
+                # 跳过终态（成功/已跳过/已取消）
+                if latest.status in (
+                    PlanStepStatus.SUCCEEDED,
+                    PlanStepStatus.SKIPPED,
+                    PlanStepStatus.CANCELLED,
+                ):
+                    continue
+                # 已失败：直接计入失败，不再尝试执行
+                if latest.status == PlanStepStatus.FAILED:
+                    executions.append(StepExecution(
+                        step_id=latest.step_id,
+                        final_status=latest.status,
+                        artifact_id=latest.output_artifact_id,
+                        error=latest.error,
+                    ))
+                    any_failed = True
+                    continue
+                # 仍在等待审批：本轮无法继续推进
+                if latest.status == PlanStepStatus.WAITING_APPROVAL:
+                    executions.append(StepExecution(
+                        step_id=latest.step_id,
+                        final_status=latest.status,
+                    ))
+                    any_blocked = True
+                    continue
+
                 exec_result = await self._execute_step(latest, running_task)
                 executions.append(exec_result)
                 if exec_result.final_status == PlanStepStatus.FAILED:
@@ -176,35 +298,7 @@ class ExecutionEngine:
             if any_failed or any_blocked:
                 break
 
-        # 整理最终 task 状态
-        if any_failed:
-            final_task = transition(running_task, TaskAction.FAIL, patch={
-                "error": "one or more steps failed",
-            })
-        elif any_blocked:
-            final_task = transition(running_task, TaskAction.BLOCK)
-        else:
-            final_task = transition(running_task, TaskAction.SUCCEED, patch={
-                "final_summary": f"{len(executions)} steps succeeded",
-            })
-        await self._repo.save(final_task)
-        await self._emit_task_status(final_task)
-
-        # 重新拉一遍快照供调用方使用
-        final_steps = await self._repo.list_steps(
-            plan.plan_id, workspace_id=plan.workspace_id,
-        )
-        artifacts = await self._repo.list_task_artifacts(
-            task.task_id, workspace_id=plan.workspace_id,
-        )
-        return RunResult(
-            task=final_task,
-            plan=plan,
-            steps=final_steps,
-            artifacts=artifacts,
-            executions=executions,
-            final_status=final_task.status,
-        )
+        return executions, any_failed, any_blocked
 
     # ── 单步执行 ───────────────────────────────────
 
@@ -215,9 +309,59 @@ class ExecutionEngine:
             kind=step.kind.value,
             skill=step.skill_name,
         )
+        await self._progress.emit(
+            task,
+            f"准备执行：{step.title}",
+            phase="step_prepare",
+            plan_id=step.plan_id,
+            step_id=step.step_id,
+            payload={
+                "step_title": step.title,
+                "skill_name": step.skill_name,
+            },
+        )
 
-        # dry-run（如果支持）
-        if self._supports_dry_run(step):
+        resolved_inputs, missing_refs = await self._input_resolver.resolve(step)
+        if missing_refs:
+            error_msg = (
+                f"upstream artifact 未就绪: {missing_refs}"
+            )
+            failed = transition(step, PlanStepAction.FAIL, patch={
+                "error": error_msg,
+            })
+            await self._repo.save(failed)
+            await self._publisher.record(ExecutionEvent(
+                workspace_id=failed.workspace_id,
+                trace_id=task.trace_id,
+                task_id=task.task_id,
+                plan_id=failed.plan_id,
+                step_id=failed.step_id,
+                type=EventType.STEP_STATUS_CHANGED,
+                level=EventLevel.ERROR,
+                message="step failed: missing upstream artifacts",
+                payload={
+                    "status": failed.status.value,
+                    "error": error_msg,
+                    "missing_refs": missing_refs,
+                },
+            ))
+            await self._progress.emit(
+                task,
+                f"步骤失败：{failed.title}",
+                phase="step_failed",
+                plan_id=failed.plan_id,
+                step_id=failed.step_id,
+                level=EventLevel.ERROR,
+                payload={"error": error_msg},
+            )
+            return StepExecution(
+                step_id=failed.step_id,
+                final_status=failed.status,
+                error=error_msg,
+            )
+
+        # dry-run（如果支持，且 step 还未离开 PENDING）
+        if step.status == PlanStepStatus.PENDING and self._supports_dry_run(step):
             step = transition(step, PlanStepAction.START_DRY_RUN)
             await self._repo.save(step)
             await self._publisher.record(ExecutionEvent(
@@ -229,9 +373,12 @@ class ExecutionEngine:
                 type=EventType.SKILL_DRY_RUN,
                 message=f"dry-run {step.skill_name}",
             ))
+            dry_params: dict[str, Any] = dict(step.input_params)
+            if resolved_inputs:
+                dry_params["input_artifacts"] = resolved_inputs
             dry = await self._registry.dry_run(SkillInvocation(
                 skill_name=step.skill_name,
-                params=dict(step.input_params),
+                params=dry_params,
                 actor_id="system",
             ))
             step = step.model_copy(update={"dry_run_result": dry.model_dump()})
@@ -247,9 +394,20 @@ class ExecutionEngine:
             PlanStepStatus.DRY_RUNNING,
         ):
             approval, step = await self._approvals.request_step_approval(
-                step, task, requester_id="system",
+                step,
+                task,
+                requester_id="system",
+                approvers=[task.requester_id] if task.requester_id else None,
             )
             if not self._auto_approve_writes:
+                await self._notify_requested_approval(approval)
+                await self._progress.emit(
+                    task,
+                    f"步骤等待审批：{step.title}",
+                    phase="step_awaiting_approval",
+                    plan_id=step.plan_id,
+                    step_id=step.step_id,
+                )
                 return StepExecution(
                     step_id=step.step_id,
                     final_status=step.status,
@@ -275,47 +433,39 @@ class ExecutionEngine:
             message=f"step running: {step.skill_name}",
             payload={"status": step.status.value},
         ))
+        await self._progress.emit(
+            task,
+            f"正在执行：{step.title}",
+            phase="step_running",
+            plan_id=step.plan_id,
+            step_id=step.step_id,
+            payload={
+                "step_title": step.title,
+                "skill_name": step.skill_name,
+            },
+        )
 
         # invoke
-        resolved_inputs, missing_refs = await self._input_resolver.resolve(step)
-        if missing_refs:
-            error_msg = (
-                f"upstream artifact 未就绪: {missing_refs}"
-            )
-            failed = transition(step, PlanStepAction.FAIL, patch={
-                "error": error_msg,
-            })
-            await self._repo.save(failed)
-            await self._publisher.record(ExecutionEvent(
-                workspace_id=failed.workspace_id,
-                trace_id=task.trace_id,
-                task_id=task.task_id,
-                plan_id=failed.plan_id,
-                step_id=failed.step_id,
-                type=EventType.STEP_STATUS_CHANGED,
-                level=EventLevel.ERROR,
-                message="step failed: missing upstream artifacts",
-                payload={
-                    "status": failed.status.value,
-                    "error": error_msg,
-                    "missing_refs": missing_refs,
-                },
-            ))
-            return StepExecution(
-                step_id=failed.step_id,
-                final_status=failed.status,
-                error=error_msg,
-            )
-
         invoke_params: dict[str, Any] = dict(step.input_params)
         if resolved_inputs:
             invoke_params["input_artifacts"] = resolved_inputs
-        result = await self._registry.invoke(SkillInvocation(
-            skill_name=step.skill_name,
-            params=invoke_params,
-            actor_id="system",
-            idempotency_key=step.idempotency_key,
-        ))
+        async with self._progress.heartbeat(
+            task,
+            f"Agent 正在处理：{step.title}",
+            phase="step_running",
+            plan_id=step.plan_id,
+            step=step,
+            payload={
+                "step_title": step.title,
+                "skill_name": step.skill_name,
+            },
+        ):
+            result = await self._registry.invoke(SkillInvocation(
+                skill_name=step.skill_name,
+                params=invoke_params,
+                actor_id="system",
+                idempotency_key=step.idempotency_key,
+            ))
         await self._publisher.record(ExecutionEvent(
             workspace_id=step.workspace_id,
             trace_id=task.trace_id,
@@ -344,6 +494,15 @@ class ExecutionEngine:
                 message="step failed",
                 payload={"status": failed.status.value, "error": failed.error},
             ))
+            await self._progress.emit(
+                task,
+                f"步骤失败：{failed.title}",
+                phase="step_failed",
+                plan_id=failed.plan_id,
+                step_id=failed.step_id,
+                level=EventLevel.ERROR,
+                payload={"error": failed.error or "skill failed"},
+            )
             return StepExecution(
                 step_id=failed.step_id,
                 final_status=failed.status,
@@ -373,11 +532,31 @@ class ExecutionEngine:
             message="step succeeded",
             payload={"status": succeeded.status.value},
         ))
+        await self._progress.emit(
+            task,
+            f"步骤完成：{succeeded.title}",
+            phase="step_completed",
+            plan_id=succeeded.plan_id,
+            step_id=succeeded.step_id,
+            payload={"artifact_id": artifact_id},
+        )
         return StepExecution(
             step_id=succeeded.step_id,
             final_status=succeeded.status,
             artifact_id=artifact_id,
         )
+
+    async def _notify_requested_approval(self, approval) -> None:  # noqa: ANN001
+        if self._approval_notifier is None:
+            return
+        try:
+            await self._approval_notifier.notify_requested(approval)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "pilot.approval_notify_failed",
+                approval_id=approval.approval_id,
+                error=str(exc),
+            )
 
     # 只对“真有副作用”的 step 跑 dry-run；纯 read 的 step 跳过减少噪音。
     _DRY_RUN_KINDS: frozenset[PlanStepKind] = frozenset({

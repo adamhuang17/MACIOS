@@ -286,7 +286,7 @@ def _make_send_message_skill(client: FeishuClientProtocol) -> tuple[SkillSpec, A
     async def _send(inv: SkillInvocation) -> SkillResult:
         params = inv.params
         chat_id = str(params.get("chat_id", "") or "")
-        text = str(params.get("text", "") or "")
+        text = _build_message_text(params)
         msg_type = str(params.get("msg_type", "text") or "text")
         receive_id_type = str(params.get("receive_id_type", "chat_id") or "chat_id")
         if not chat_id:
@@ -382,6 +382,56 @@ def _to_bytes(value: Any) -> bytes | None:  # noqa: ANN401
         except (TypeError, ValueError):
             return None
     return None
+
+
+def _build_message_text(params: dict[str, Any]) -> str:
+    text = str(params.get("text", "") or "").strip()
+    if text:
+        return text
+
+    title = str(params.get("title", "") or "").strip()
+    upstream = params.get("input_artifacts", {}) or {}
+    share_artifact = upstream.get("share") or upstream.get("summary")
+    brief_artifact = upstream.get("brief")
+
+    share_title = ""
+    share_url = ""
+    file_token = ""
+    if isinstance(share_artifact, dict):
+        share_title = str(share_artifact.get("title", "") or "").strip()
+        content = share_artifact.get("content")
+        metadata = share_artifact.get("metadata") if isinstance(
+            share_artifact.get("metadata"), dict,
+        ) else {}
+        if isinstance(content, dict):
+            share_title = str(content.get("file_name") or share_title or "").strip()
+            share_url = str(
+                content.get("share_url") or content.get("download_url") or "",
+            ).strip()
+            file_token = str(content.get("file_token") or "").strip()
+        if metadata:
+            share_url = str(metadata.get("share_url") or share_url or "").strip()
+            file_token = str(metadata.get("file_token") or file_token or "").strip()
+
+    brief_title = ""
+    if isinstance(brief_artifact, dict):
+        brief_title = str(brief_artifact.get("title", "") or "").strip()
+
+    lines: list[str] = []
+    if title:
+        lines.append(title)
+    elif share_title:
+        lines.append(f"已生成文件：{share_title}")
+    elif brief_title:
+        lines.append(f"已完成：{brief_title}")
+    if share_url:
+        lines.append(f"分享链接：{share_url}")
+        lines.append("（飞书已单独推送一条「与我共享」通知，可直接点击打开）")
+    elif file_token:
+        lines.append(f"文件 token：{file_token}")
+        lines.append("（飞书已单独推送一条「与我共享」通知，可直接点击打开）")
+
+    return "\n".join(lines).strip()
 
 
 # ── 注册入口 ────────────────────────────────────────

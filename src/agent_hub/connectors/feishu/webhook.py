@@ -22,6 +22,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -194,7 +195,7 @@ class FeishuWebhookProcessor:
     ) -> FeishuWebhookResult:
         """内部：路由 / 去重 / 规范化 / 过滤（已完成验签与解密）。"""
         if event_type != "im.message.receive_v1":
-            if event_type == "card.action.trigger":
+            if event_type in ("card.action.trigger", "p2.card.action.trigger"):
                 # M5 飞书审批卡片回调：与消息事件复用 webhook URL，但走单独
                 # 的解析路径，返回 CARD_CALLBACK，由 service 路由到
                 # PilotCommandService.decide_approval。
@@ -452,16 +453,23 @@ def _normalize_inbound_message(
         elif sender_id_obj.get("user_id"):
             sender_id_type = "user_id"
 
-    text = _extract_text(message_type, message_obj.get("content"))
-
     mentions: list[str] = []
+    mention_keys: list[str] = []
     raw_mentions = message_obj.get("mentions") or ()
     for mention in raw_mentions:
         if not isinstance(mention, dict):
             continue
+        mention_key = mention.get("key")
+        if mention_key:
+            mention_keys.append(str(mention_key))
         mention_id = (mention.get("id") or {}).get("open_id")
         if mention_id:
             mentions.append(str(mention_id))
+
+    text = _strip_mention_keys(
+        _extract_text(message_type, message_obj.get("content")),
+        mention_keys,
+    )
 
     attachments = _extract_attachments(message_type, message_obj.get("content"))
 
@@ -516,6 +524,15 @@ def _extract_text(message_type: FeishuMessageType, raw_content: Any) -> str:  # 
     if message_type == FeishuMessageType.IMAGE:
         return ""
     return str(parsed)
+
+
+def _strip_mention_keys(text: str, mention_keys: list[str]) -> str:
+    """移除飞书文本里的 mention 占位符，避免把 @bot 当成用户意图。"""
+    cleaned = text
+    for key in mention_keys:
+        cleaned = cleaned.replace(key, " ")
+    cleaned = re.sub(r"@_user_\d+\b", " ", cleaned)
+    return " ".join(cleaned.split())
 
 
 def _extract_attachments(

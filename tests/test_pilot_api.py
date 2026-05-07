@@ -28,6 +28,11 @@ def app() -> Iterator[FastAPI]:
         pilot_demo_mode=True,
         pilot_auto_approve_writes=False,
         pilot_admin_token="admin-secret",
+        public_base_url="",
+        feishu_enabled=False,
+        feishu_use_long_conn=False,
+        pilot_use_real_gateway=False,
+        pilot_use_real_chain=False,
     )
     runtime = build_pilot_runtime(settings)
 
@@ -182,6 +187,135 @@ def test_unknown_approval_returns_404(client: TestClient) -> None:
         "/api/pilot/approvals/missing/decision",
         json={"decision": "approve", "actor_id": "x"},
     )
+    assert resp.status_code == 404
+
+
+# ── 续跑 ────────────────────────────────────────────
+
+
+def _approve_plan_then_blocked(client: TestClient) -> dict:
+    """提交任务，approve plan 进入 step 审批阶段，返回 task detail。"""
+    handle = _submit(client)
+    pending = _wait_for_pending_approval(client, handle["task_id"])
+    assert pending is not None
+    decision = client.post(
+        f"/api/pilot/approvals/{pending['approval_id']}/decision",
+        json={
+            "decision": "approve",
+            "actor_id": "tester-1",
+            "run_after_approval": True,
+        },
+    )
+    assert decision.status_code == 200
+    detail = client.get(f"/api/pilot/tasks/{handle['task_id']}").json()
+    return {"handle": handle, "detail": detail}
+
+
+def test_step_approval_auto_resumes(client: TestClient) -> None:
+    """approve plan 后停在 step 审批；approve step 应在同 task 上自动续跑。"""
+    bundle = _approve_plan_then_blocked(client)
+    handle = bundle["handle"]
+    detail = bundle["detail"]
+    assert detail["task"]["status"] == "blocked"
+    step_action = next(
+        a for a in detail["available_actions"] if a["type"] == "decide_step"
+    )
+    blocked_step_id = step_action["step_id"]
+
+    decision = client.post(
+        f"/api/pilot/approvals/{step_action['approval_id']}/decision",
+        json={
+            "decision": "approve",
+            "actor_id": "tester-1",
+            "run_after_approval": True,
+        },
+    )
+    assert decision.status_code == 200, decision.text
+    payload = decision.json()
+    assert payload["approval_status"] == "approved"
+    assert payload["step_status"] == "approved"
+    # 续跑后任务状态应在 blocked（下一 step 审批）/succeeded/failed 之间
+    assert payload["task_status"] in {"blocked", "succeeded", "failed"}
+    assert payload["run_result"] is not None
+
+    refreshed = client.get(f"/api/pilot/tasks/{handle['task_id']}").json()
+    refreshed_step = next(
+        s for s in refreshed["steps"] if s["step_id"] == blocked_step_id
+    )
+    assert refreshed_step["status"] == "succeeded"
+    assert refreshed_step["output_artifact_id"]
+
+
+def test_step_reject_finalizes_task_failed(client: TestClient) -> None:
+    bundle = _approve_plan_then_blocked(client)
+    handle = bundle["handle"]
+    step_action = next(
+        a for a in bundle["detail"]["available_actions"]
+        if a["type"] == "decide_step"
+    )
+
+    resp = client.post(
+        f"/api/pilot/approvals/{step_action['approval_id']}/decision",
+        json={"decision": "reject", "actor_id": "tester-1", "comment": "no"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["approval_status"] == "rejected"
+    assert payload["step_status"] == "failed"
+    assert payload["task_status"] == "failed"
+
+    detail = client.get(f"/api/pilot/tasks/{handle['task_id']}").json()
+    assert detail["task"]["status"] == "failed"
+    types = {a["type"] for a in detail["available_actions"]}
+    assert "decide_step" not in types
+
+
+def test_resume_endpoint_recovers_blocked_after_manual_approval(
+    client: TestClient,
+) -> None:
+    """approve step 时 run_after_approval=false → blocked 持续；
+    POST /tasks/{id}/resume 应在 detail 中显示 resume_task 动作并能成功续跑。
+    """
+    bundle = _approve_plan_then_blocked(client)
+    handle = bundle["handle"]
+    step_action = next(
+        a for a in bundle["detail"]["available_actions"]
+        if a["type"] == "decide_step"
+    )
+
+    decision = client.post(
+        f"/api/pilot/approvals/{step_action['approval_id']}/decision",
+        json={
+            "decision": "approve",
+            "actor_id": "tester-1",
+            "run_after_approval": False,
+        },
+    )
+    assert decision.status_code == 200
+    payload = decision.json()
+    assert payload["task_status"] == "blocked"
+    assert "run_result" not in payload or payload["run_result"] is None
+
+    detail = client.get(f"/api/pilot/tasks/{handle['task_id']}").json()
+    assert detail["task"]["status"] == "blocked"
+    types = {a["type"] for a in detail["available_actions"]}
+    assert "resume_task" in types
+
+    resume = client.post(f"/api/pilot/tasks/{handle['task_id']}/resume")
+    assert resume.status_code == 200, resume.text
+    body = resume.json()
+    assert body["task_id"] == handle["task_id"]
+    assert body["task_status"] in {"blocked", "succeeded", "failed"}
+
+
+def test_resume_endpoint_rejects_non_blocked_task(client: TestClient) -> None:
+    handle = _submit(client)
+    resp = client.post(f"/api/pilot/tasks/{handle['task_id']}/resume")
+    assert resp.status_code == 409
+
+
+def test_resume_endpoint_unknown_task_returns_404(client: TestClient) -> None:
+    resp = client.post("/api/pilot/tasks/missing/resume")
     assert resp.status_code == 404
 
 

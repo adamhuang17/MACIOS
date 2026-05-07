@@ -254,6 +254,7 @@ class PilotQueryService:
                         "decisions": ["approve", "reject"],
                     })
         if task.status == TaskStatus.BLOCKED:
+            has_requested_step_approval = False
             for step in steps:
                 if step.status == PlanStepStatus.WAITING_APPROVAL:
                     pending = [
@@ -262,12 +263,34 @@ class PilotQueryService:
                         and a.status == ApprovalStatus.REQUESTED
                     ]
                     for a in pending:
+                        has_requested_step_approval = True
                         actions.append({
                             "type": "decide_step",
                             "approval_id": a.approval_id,
                             "step_id": step.step_id,
                             "decisions": ["approve", "reject"],
                         })
+            # 兜底：blocked task 已有 approved step 但没有 requested approval，
+            # 且仍存在未完成 step（pending/approved/dry_running），
+            # 说明历史数据停留在 approved-but-not-resumed，可手动续跑。
+            if not has_requested_step_approval:
+                has_approved = any(
+                    s.status == PlanStepStatus.APPROVED for s in steps
+                )
+                has_runnable_remainder = any(
+                    s.status in (
+                        PlanStepStatus.PENDING,
+                        PlanStepStatus.APPROVED,
+                        PlanStepStatus.DRY_RUNNING,
+                    )
+                    for s in steps
+                )
+                if has_approved and has_runnable_remainder:
+                    actions.append({
+                        "type": "resume_task",
+                        "task_id": task.task_id,
+                        "label": "继续执行",
+                    })
         if task.status in (TaskStatus.FAILED, TaskStatus.RETRYABLE_FAILED):
             actions.append({"type": "retry_task"})
             failed_steps = [

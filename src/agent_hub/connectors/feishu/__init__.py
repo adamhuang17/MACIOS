@@ -32,6 +32,7 @@ from agent_hub.connectors.feishu.models import (
     FeishuMessageType,
     FeishuWebhookOutcome,
 )
+from agent_hub.connectors.feishu.progress_notifier import FeishuProgressNotifier
 from agent_hub.connectors.feishu.service import (
     FeishuAckResult,
     FeishuWebhookService,
@@ -59,6 +60,7 @@ __all__ = [
     "FeishuMessageRecord",
     "FeishuMessageSent",
     "FeishuMessageType",
+    "FeishuProgressNotifier",
     "FeishuWebhookError",
     "FeishuWebhookOutcome",
     "FeishuWebhookProcessor",

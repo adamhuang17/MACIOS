@@ -1,0 +1,85 @@
+{
+  "slide_count": 12,
+  "slides": [
+    {
+      "layout": "title",
+      "subtitle": "Auto-generated",
+      "title": "Untitled Deck"
+    },
+    {
+      "bullets": [
+        "> 原始需求：帮我生成一个带有简单自我介绍的路演 PPT"
+      ],
+      "layout": "title_and_bullets",
+      "title": "帮我生成一个带有简单自我介绍的路演 PPT Brief"
+    },
+    {
+      "bullets": [
+        "基于「帮我生成一个带有简单自我介绍的路演 PPT」补全 背景 描述。"
+      ],
+      "layout": "title_and_bullets",
+      "title": "背景"
+    },
+    {
+      "bullets": [
+        "基于「帮我生成一个带有简单自我介绍的路演 PPT」补全 目标 描述。"
+      ],
+      "layout": "title_and_bullets",
+      "title": "目标"
+    },
+    {
+      "bullets": [
+        "基于「帮我生成一个带有简单自我介绍的路演 PPT」补全 受众 描述。"
+      ],
+      "layout": "title_and_bullets",
+      "title": "受众"
+    },
+    {
+      "bullets": [
+        "基于「帮我生成一个带有简单自我介绍的路演 PPT」补全 约束 描述。"
+      ],
+      "layout": "title_and_bullets",
+      "title": "约束"
+    },
+    {
+      "bullets": [
+        "基于「帮我生成一个带有简单自我介绍的路演 PPT」补全 输入 描述。"
+      ],
+      "layout": "title_and_bullets",
+      "title": "输入"
+    },
+    {
+      "bullets": [
+        "基于「帮我生成一个带有简单自我介绍的路演 PPT」补全 洞察 描述。"
+      ],
+      "layout": "title_and_bullets",
+      "title": "洞察"
+    },
+    {
+      "bullets": [
+        "基于「帮我生成一个带有简单自我介绍的路演 PPT」补全 交付 描述。"
+      ],
+      "layout": "title_and_bullets",
+      "title": "交付"
+    },
+    {
+      "bullets": [
+        "基于「帮我生成一个带有简单自我介绍的路演 PPT」补全 风险 描述。"
+      ],
+      "layout": "title_and_bullets",
+      "title": "风险"
+    },
+    {
+      "bullets": [
+        "基于「帮我生成一个带有简单自我介绍的路演 PPT」补全 下一步 描述。"
+      ],
+      "layout": "title_and_bullets",
+      "title": "下一步"
+    },
+    {
+      "layout": "thank_you",
+      "title": "Thank You"
+    }
+  ],
+  "title": "Untitled Deck"
+}

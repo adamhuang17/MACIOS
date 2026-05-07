@@ -154,7 +154,7 @@ class TemplatePlanGateway:
             goal = f"为「{title}」生成一份可分享的演示稿"
             assumptions = ["输入文本完整", "Drive 写权限可用"]
         elif profile is PlanProfile.DOC_ONLY:
-            steps = self._build_doc_only_steps(ctx, title, skills)
+            steps = self._build_doc_only_steps(ctx, title, skills, chat_id)
             goal = f"为「{title}」生成 Brief 文档"
             assumptions = ["输入文本完整"]
         elif profile is PlanProfile.SUMMARY_ONLY:
@@ -266,6 +266,7 @@ class TemplatePlanGateway:
         ctx: PlanContext,
         title: str,
         skills: dict[str, str],
+        chat_id: str = "",
     ) -> list[PlanStepDraft]:
         return [
             PlanStepDraft(
@@ -287,6 +288,30 @@ class TemplatePlanGateway:
                 output_artifact_ref="brief",
                 depends_on=["ctx"],
                 risk_level=RiskLevel.READ,
+            ),
+            PlanStepDraft(
+                ref="share",
+                title="上传 Drive 并生成分享",
+                kind=PlanStepKind.UPLOAD,
+                skill_name=skills["upload"],
+                input_params={"file_name": f"{title}.md"},
+                inputs_from=["brief"],
+                output_artifact_ref="share",
+                depends_on=["brief"],
+                risk_level=RiskLevel.SHARE,
+                requires_approval=True,
+            ),
+            PlanStepDraft(
+                ref="summary",
+                title="回传群聊摘要",
+                kind=PlanStepKind.SUMMARIZE,
+                skill_name=skills["summary"],
+                input_params={"chat_id": chat_id, "title": f"{title} 已完成"},
+                inputs_from=["share"],
+                output_artifact_ref="summary",
+                depends_on=["share"],
+                risk_level=RiskLevel.SHARE,
+                requires_approval=True,
             ),
         ]
 

@@ -77,6 +77,7 @@ from agent_hub.pilot.services import (
     TaskDetail,
     TaskHandle,
     TaskOrchestrator,
+    TaskProgressReporter,
     TaskRequest,
     TaskSummary,
     TemplatePlanGateway,
@@ -163,6 +164,7 @@ __all__ = [
     "StepExecution",
     "TaskHandle",
     "TaskOrchestrator",
+    "TaskProgressReporter",
     "TaskRequest",
     "TemplatePlanGateway",
     # M2 services

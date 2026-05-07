@@ -124,10 +124,19 @@ async def test_template_gateway_doc_only_only_two_steps() -> None:
         ),
     )
     assert bp.profile == PlanProfile.DOC_ONLY
-    assert {s.kind for s in bp.steps} == {
+    # DOC_ONLY 也走 ctx → brief → upload(brief.md) → summary 四步，
+    # 才能让用户在飞书侧拿到可访问链接。
+    kinds = [s.kind for s in bp.steps]
+    assert kinds == [
         PlanStepKind.READ_CONTEXT,
         PlanStepKind.GENERATE_DOC,
-    }
+        PlanStepKind.UPLOAD,
+        PlanStepKind.SUMMARIZE,
+    ]
+    upload = next(s for s in bp.steps if s.kind == PlanStepKind.UPLOAD)
+    assert upload.skill_name == "real.drive.upload_share"
+    assert upload.input_params.get("file_name", "").endswith(".md")
+    assert upload.inputs_from == ["brief"]
 
 
 @pytest.mark.asyncio

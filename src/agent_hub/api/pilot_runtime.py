@@ -20,9 +20,11 @@ from agent_hub.connectors.feishu import (
     FeishuClient,
     FeishuClientProtocol,
     FeishuLongConnClient,
+    FeishuProgressNotifier,
     FeishuWebhookProcessor,
     FeishuWebhookService,
 )
+from agent_hub.connectors.feishu.approval_notifier import FeishuApprovalNotifier
 from agent_hub.pilot.events.bus import EventBus
 from agent_hub.pilot.events.store import (
     EventStore,
@@ -43,6 +45,7 @@ from agent_hub.pilot.services.model_gateway import (
 )
 from agent_hub.pilot.services.orchestrator import TaskOrchestrator
 from agent_hub.pilot.services.planning import PlanningService
+from agent_hub.pilot.services.progress import TaskProgressReporter
 from agent_hub.pilot.services.queries import PilotQueryService
 from agent_hub.pilot.services.repository import PilotRepository
 from agent_hub.pilot.skills.fake import register_fake_skills
@@ -85,8 +88,11 @@ class PilotRuntime:
     feishu_client: FeishuClientProtocol | None = None
     feishu_webhook_service: FeishuWebhookService | None = None
     feishu_long_conn: FeishuLongConnClient | None = None
+    feishu_progress_notifier: FeishuProgressNotifier | None = None
 
     async def aclose(self) -> None:
+        if self.feishu_progress_notifier is not None:
+            await self.feishu_progress_notifier.aclose()
         await self.bus.close()
         if self.feishu_long_conn is not None:
             await self.feishu_long_conn.aclose()
@@ -126,6 +132,10 @@ def build_pilot_runtime(
     bus = EventBus()
     repo = PilotRepository(snapshots)
     publisher = PilotEventPublisher(store, bus)
+    progress = TaskProgressReporter(
+        publisher,
+        interval_seconds=settings.pilot_progress_heartbeat_interval_seconds,
+    )
 
     registry = SkillRegistry()
     if settings.pilot_demo_mode:
@@ -163,6 +173,7 @@ def build_pilot_runtime(
         artifacts=artifacts,
         approvals=approvals,
         auto_approve_writes=settings.pilot_auto_approve_writes,
+        progress_reporter=progress,
     )
     orchestrator = TaskOrchestrator(
         repository=repo,
@@ -170,6 +181,7 @@ def build_pilot_runtime(
         planning=planning,
         approvals=approvals,
         execution=execution,
+        progress_reporter=progress,
     )
     queries = PilotQueryService(repo, store)
     commands = PilotCommandService(repo, approvals, orchestrator, publisher)
@@ -195,6 +207,18 @@ def build_pilot_runtime(
         commands=commands,
         ingress=ingress,
     )
+    if feishu_client is not None:
+        notifier = FeishuApprovalNotifier(repo, feishu_client)
+        execution.set_approval_notifier(notifier)
+        orchestrator.set_approval_notifier(notifier)
+        progress_notifier = FeishuProgressNotifier(
+            repo,
+            feishu_client,
+            min_interval_seconds=settings.feishu_progress_min_interval_seconds,
+        )
+        publisher.add_handler(progress_notifier.handle_event)
+    else:
+        progress_notifier = None
 
     # 真实产物链（PPTX/Drive）：飞书可用 + 启用开关时注册
     if settings.pilot_use_real_chain:
@@ -203,6 +227,8 @@ def build_pilot_runtime(
             feishu_client=feishu_client,
             artifact_reader=artifacts.read_content_by_id,
             default_folder_token=settings.feishu_default_folder_token,
+            admin_open_id=settings.feishu_admin_open_id,
+            drive_url_template=settings.feishu_drive_url_template,
             allow_overwrite=True,
         )
         logger.info(
@@ -232,6 +258,7 @@ def build_pilot_runtime(
         feishu_client=feishu_client,
         feishu_webhook_service=feishu_webhook_service,
         feishu_long_conn=feishu_long_conn,
+        feishu_progress_notifier=progress_notifier,
     )
 
 
