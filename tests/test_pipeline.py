@@ -31,6 +31,7 @@ def pipeline(settings):
         patch("agent_hub.agents.llm_agent.Anthropic"),
         patch("agent_hub.agents.llm_agent.OpenAI"),
         patch("agent_hub.core.pipeline.RAGPipeline"),
+        patch("agent_hub.core.router.AsyncOpenAI"),
     ):
         return AgentPipeline(settings)
 
