@@ -149,4 +149,4 @@ async def test_upload_share_accepts_brief_upstream() -> None:
 
     assert result.success is True, result.error
     assert client.uploaded_files[0]["file_name"] == "intro.md"
-    assert client.uploaded_files[0]["size"] == len("# Hello\n自我介绍".encode("utf-8"))
+    assert client.uploaded_files[0]["size"] == len("# Hello\n自我介绍".encode())

@@ -5,14 +5,23 @@ services:
       - "8080:8080"
     env_file: .env
     environment:
-      POSTGRES_DSN: postgresql://agent:agent@postgres:5432/agent_hub
-      REDIS_URL: redis://redis:6379/0
-      OBSIDIAN_VAULT_PATH: /app/data/obsidian
+      # 容器内地址必须指向 compose service，而不是 localhost。
+      PG_DSN: ${PG_DSN:-postgresql://agent:agent@postgres:5432/agent_hub}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      OBSIDIAN_VAULT_PATH: ${OBSIDIAN_VAULT_PATH:-/app/data/obsidian}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
-      DASHBOARD_STATIC_DIR: /app/web
-      PILOT_ENABLED: "true"
-      PILOT_DEMO_MODE: "true"
-      PILOT_STORE_PATH: /app/data/pilot/pilot.sqlite3
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      DASHBOARD_STATIC_DIR: ${DASHBOARD_STATIC_DIR:-/app/web}
+      PILOT_ENABLED: ${PILOT_ENABLED:-true}
+      PILOT_DEMO_MODE: ${PILOT_DEMO_MODE:-true}
+      PILOT_STORE_PATH: ${PILOT_STORE_PATH:-/app/data/pilot/pilot.sqlite3}
+      PILOT_ARTIFACT_DIR: ${PILOT_ARTIFACT_DIR:-/app/data/pilot/artifacts}
+      PILOT_USE_REAL_GATEWAY: ${PILOT_USE_REAL_GATEWAY:-false}
+      # Docker 默认跑本地保底演示链路；接入飞书前不要开真实分享链路。
+      PILOT_USE_REAL_CHAIN: ${PILOT_USE_REAL_CHAIN:-false}
+      FEISHU_ENABLED: ${FEISHU_ENABLED:-false}
+      FEISHU_USE_LONG_CONN: ${FEISHU_USE_LONG_CONN:-false}
+      PILOT_ADMIN_TOKEN: ${PILOT_ADMIN_TOKEN:-change-me}
     volumes:
       - obsidian_data:/app/data/obsidian
       - pilot_data:/app/data/pilot
