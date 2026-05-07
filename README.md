@@ -66,12 +66,12 @@ Agent-Hub 可以按两个层次理解：
 graph TD
     U[User / Feishu / Dashboard] --> API[FastAPI App]
 
-    API --> CHAT[/chat / /chat/stream]
+    API --> CHAT["/chat & /chat/stream"]
     API --> PILOT[/api/pilot/*]
     API --> FEISHU[/api/feishu/webhook 可选]
     API --> DASH[/dashboard/]
 
-    CHAT --> PIPE[AgentPipeline]
+    CHAT["/chat & /chat/stream"] --> PIPE[AgentPipeline]
     PIPE --> ROUTER[DecisionRouter]
     PIPE --> LLM[LLMAgent + ReAct]
     PIPE --> RET[RetrievalAgent]
