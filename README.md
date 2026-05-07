@@ -16,12 +16,12 @@
 Agent-Hub 可以按两个层次理解：
 
 1. **通用多 Agent 引擎**
-   核心入口是 `DecisionRouter + AgentPipeline + LLMAgent / RetrievalAgent / ToolAgent / ReflectionAgent + Memory + PromptGuard`，负责“理解请求、拆解任务、调用工具、检索知识、写入记忆、流式返回”。
+   核心入口是 `DecisionRouter + AgentPipeline + LLMAgent / RetrievalAgent / ToolAgent / ReflectionAgent + Memory + PromptGuard`，负责"理解请求、拆解任务、调用工具、检索知识、写入记忆、流式返回"。
 2. **Agent-Pilot 业务运行时**
    Pilot 在通用引擎之上补齐任务化与协作化能力：`Workspace / Task / Plan / PlanStep / Approval / Artifact / ExecutionEvent`，并提供 Dashboard、SSE、审批恢复、飞书入口与 PPT 产物链路。
 
 如果你只想验证 Agent 编排内核，可以从 `/chat` 与 `/chat/stream` 开始。
-如果你想看完整的“任务规划 → 审批 → 执行 → 产物 → 多端同步”闭环，请直接使用 `/api/pilot/*` 与 `/dashboard/`。
+如果你想看完整的"任务规划 → 审批 → 执行 → 产物 → 多端同步"闭环，请直接使用 `/api/pilot/*` 与 `/dashboard/`。
 
 ## 当前已实现范围
 
@@ -64,16 +64,16 @@ Agent-Hub 可以按两个层次理解：
 
 ```mermaid
 graph TD
-    U[User / Feishu / Dashboard] --> API[FastAPI App]
+    U["User / Feishu / Dashboard"] --> API["FastAPI App"]
 
     API --> CHAT["/chat & /chat/stream"]
-    API --> PILOT[/api/pilot/*]
-    API --> FEISHU[/api/feishu/webhook 可选]
-    API --> DASH[/dashboard/]
+    API --> PILOT["/api/pilot/*"]
+    API --> FEISHU["/api/feishu/webhook"]
+    API --> DASH["/dashboard/"]
 
-    CHAT["/chat & /chat/stream"] --> PIPE[AgentPipeline]
+    CHAT --> PIPE[AgentPipeline]
     PIPE --> ROUTER[DecisionRouter]
-    PIPE --> LLM[LLMAgent + ReAct]
+    PIPE --> LLM["LLMAgent + ReAct"]
     PIPE --> RET[RetrievalAgent]
     PIPE --> TOOL[ToolAgent]
     PIPE --> REFLECT[ReflectionAgent]
@@ -89,9 +89,9 @@ graph TD
     ORCH --> EXEC[ExecutionEngine]
     EXEC --> SKILLS[SkillRegistry]
     EXEC --> ART[ArtifactStore]
-    RUNTIME --> STORE[SQLite/InMemory EventStore]
+    RUNTIME --> STORE["SQLite/InMemory EventStore"]
     RUNTIME --> BUS[EventBus]
-    BUS --> SSE[Pilot SSE]
+    BUS --> SSE["Pilot SSE"]
     SSE --> DASH
 ```
 
@@ -251,7 +251,7 @@ curl -X POST http://127.0.0.1:8080/api/pilot/tasks \
 提交成功后：
 
 1. 打开 `/dashboard/` 观察任务列表、步骤状态和事件流。
-2. 在 Dashboard 里对 `requested` 审批点“同意”。
+2. 在 Dashboard 里对 `requested` 审批点"同意"。
 3. 查看生成的 Brief、SlideSpec、PPTX 和 fake/share 产物。
 
 ### 5. 可选地测试通用聊天入口
@@ -290,7 +290,7 @@ curl -N -X POST http://127.0.0.1:8080/chat/stream \
 - 把 Pilot 数据和 Artifact 持久化到 Docker volume
 - 默认关闭 `FEISHU_ENABLED` 与 `PILOT_USE_REAL_CHAIN`
 
-这样做的目的，是让你**没有飞书凭据、没有公网回调地址时也能直接演示**，避免容器启动后落到“规划走真实链路、分享技能却没注册”的半可用状态。
+这样做的目的，是让你**没有飞书凭据、没有公网回调地址时也能直接演示**，避免容器启动后落到"规划走真实链路、分享技能却没注册"的半可用状态。
 
 ### 服务说明
 
@@ -478,7 +478,7 @@ python scripts/evaluate.py
 
 ### 1. Dashboard 可以打开，但一直没有任务
 
-这是正常的。Dashboard 目前主要负责“看状态、做审批、看产物”，不是任务创建页。请先调用 `/api/pilot/tasks`，或从飞书入口发起任务。
+这是正常的。Dashboard 目前主要负责"看状态、做审批、看产物"，不是任务创建页。请先调用 `/api/pilot/tasks`，或从飞书入口发起任务。
 
 ### 2. `docker compose up` 后，为什么默认不直接连飞书？
 
