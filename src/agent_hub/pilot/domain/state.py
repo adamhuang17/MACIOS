@@ -103,6 +103,7 @@ _PLAN_STEP_TABLE: dict[tuple[PlanStepStatus, PlanStepAction], PlanStepStatus] = 
     (PlanStepStatus.PENDING, PlanStepAction.REQUEST_APPROVAL): PlanStepStatus.WAITING_APPROVAL,
     (PlanStepStatus.PENDING, PlanStepAction.START_RUNNING): PlanStepStatus.RUNNING,
     (PlanStepStatus.PENDING, PlanStepAction.SKIP): PlanStepStatus.SKIPPED,
+    (PlanStepStatus.PENDING, PlanStepAction.FAIL): PlanStepStatus.FAILED,
     (PlanStepStatus.PENDING, PlanStepAction.CANCEL): PlanStepStatus.CANCELLED,
     (PlanStepStatus.DRY_RUNNING, PlanStepAction.REQUEST_APPROVAL): PlanStepStatus.WAITING_APPROVAL,
     (PlanStepStatus.DRY_RUNNING, PlanStepAction.START_RUNNING): PlanStepStatus.RUNNING,

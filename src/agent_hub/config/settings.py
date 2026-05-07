@@ -141,9 +141,9 @@ class Settings(BaseSettings):
     # 启用真实产物链（SlideSpec / PPTX / Drive）；False 时仍走 fake skills。
     pilot_use_real_chain: bool = True
     # 长任务活动心跳间隔；用于 task.progress 事件与 Dashboard 实时活动感知。
-    pilot_progress_heartbeat_interval_seconds: float = 5.0
-    # 飞书端进度消息最小发送间隔；避免心跳事件刷屏。
-    feishu_progress_min_interval_seconds: float = 5.0
+    pilot_progress_heartbeat_interval_seconds: float = 15.0
+    # 飞书端心跳消息最小发送间隔；避免长任务进度刷屏。
+    feishu_progress_min_interval_seconds: float = 30.0
 
     # ── M4 飞书 IM ───────────────────────────────────
     # 启用真实飞书入口（webhook + skills）；为 False 时只用 fake skills。

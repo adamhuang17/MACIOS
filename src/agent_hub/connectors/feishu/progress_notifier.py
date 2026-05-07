@@ -25,30 +25,95 @@ class FeishuProgressNotifier:
         repository: PilotRepository,
         client: FeishuClientProtocol,
         *,
-        min_interval_seconds: float = 5.0,
+        min_interval_seconds: float = 30.0,
     ) -> None:
         self._repo = repository
         self._client = client
         self._min_interval_seconds = max(1.0, float(min_interval_seconds))
         self._last_sent_at: dict[str, float] = {}
+        self._pending_approvals_by_task: dict[str, set[str]] = {}
+        self._send_chains: dict[str, asyncio.Task[None]] = {}
         self._tasks: set[asyncio.Task[None]] = set()
 
     def handle_event(self, event: ExecutionEvent) -> None:
+        if event.type is EventType.APPROVAL_REQUESTED:
+            self._mark_approval_pending(event)
+            return
+        if event.type in {
+            EventType.APPROVAL_DECIDED,
+            EventType.APPROVAL_EXPIRED,
+            EventType.APPROVAL_SUPERSEDED,
+        }:
+            self._clear_approval_pending(event)
+            return
         if event.type is not EventType.TASK_PROGRESS:
             return
         if event.payload.get("notify_feishu") is False:
             return
         task_id = event.task_id or event.event_id
+        if self._pending_approvals_by_task.get(task_id):
+            return
         kind = str(event.payload.get("kind") or "milestone")
         now = time.monotonic()
         last_sent = self._last_sent_at.get(task_id, 0.0)
         if kind == "heartbeat" and now - last_sent < self._min_interval_seconds:
             return
+        if not _should_notify_progress(event):
+            return
         self._last_sent_at[task_id] = now
 
-        task = asyncio.create_task(self._send(event))
+        previous = self._send_chains.get(task_id)
+        task = asyncio.create_task(self._send_after(previous, event, task_id))
+        self._send_chains[task_id] = task
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(
+            lambda done, chained_task_id=task_id: self._clear_send_chain(
+                chained_task_id, done,
+            ),
+        )
+
+    def _mark_approval_pending(self, event: ExecutionEvent) -> None:
+        if not event.task_id:
+            return
+        approval_id = event.approval_id or event.event_id
+        self._pending_approvals_by_task.setdefault(event.task_id, set()).add(
+            approval_id,
+        )
+
+    def _clear_approval_pending(self, event: ExecutionEvent) -> None:
+        if not event.task_id:
+            return
+        if not event.approval_id:
+            self._pending_approvals_by_task.pop(event.task_id, None)
+            return
+        pending = self._pending_approvals_by_task.get(event.task_id)
+        if pending is None:
+            return
+        pending.discard(event.approval_id)
+        if not pending:
+            self._pending_approvals_by_task.pop(event.task_id, None)
+
+    def _clear_send_chain(
+        self,
+        task_id: str,
+        task: asyncio.Task[None],
+    ) -> None:
+        if self._send_chains.get(task_id) is task:
+            self._send_chains.pop(task_id, None)
+
+    async def _send_after(
+        self,
+        previous: asyncio.Task[None] | None,
+        event: ExecutionEvent,
+        task_id: str,
+    ) -> None:
+        if previous is not None:
+            with suppress(Exception):
+                await previous
+        if self._pending_approvals_by_task.get(task_id):
+            return
+        await self._send(event)
 
     async def aclose(self) -> None:
         if not self._tasks:
@@ -59,6 +124,7 @@ class FeishuProgressNotifier:
             with suppress(asyncio.CancelledError):
                 await task
         self._tasks.clear()
+        self._send_chains.clear()
 
     async def _send(self, event: ExecutionEvent) -> None:
         workspace = await self._repo.get_workspace(event.workspace_id)
@@ -92,9 +158,34 @@ def _format_progress_text(event: ExecutionEvent, title: str) -> str:
     kind = str(event.payload.get("kind") or "milestone")
     phase = _phase_label(str(event.payload.get("phase") or ""))
     if kind == "heartbeat":
-        interval = int(event.payload.get("interval_seconds") or 5)
-        return f"Agent 仍在工作，最近活动 {interval} 秒前\n任务：{title}\n阶段：{phase}"
+        elapsed = int(event.payload.get("elapsed_seconds") or 0)
+        duration = _format_duration(elapsed)
+        return f"Agent 仍在工作，已持续 {duration}\n任务：{title}\n阶段：{phase}"
     return f"{event.message}\n任务：{title}\n阶段：{phase}"
+
+
+def _should_notify_progress(event: ExecutionEvent) -> bool:
+    phase = str(event.payload.get("phase") or "")
+    message = event.message
+    if phase == "step_prepare":
+        return False
+    if message == "Agent 开始执行任务步骤":
+        return False
+    return not message.startswith("Agent 正在处理：")
+
+
+def _format_duration(seconds: int) -> str:
+    if seconds < 60:
+        return f"{max(seconds, 1)} 秒"
+    minutes, remaining_seconds = divmod(seconds, 60)
+    if minutes < 60:
+        if remaining_seconds:
+            return f"{minutes} 分 {remaining_seconds} 秒"
+        return f"{minutes} 分钟"
+    hours, remaining_minutes = divmod(minutes, 60)
+    if remaining_minutes:
+        return f"{hours} 小时 {remaining_minutes} 分"
+    return f"{hours} 小时"
 
 
 def _phase_label(phase: str) -> str:
