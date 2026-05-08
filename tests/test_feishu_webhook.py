@@ -324,6 +324,121 @@ async def test_service_returns_challenge_outcome() -> None:
     assert result.challenge == "abc"
 
 
+# ── Ingress 注入下的 START_TASK 路径（回归 ack 死代码 bug） ──
+
+
+@pytest.mark.asyncio
+async def test_service_with_ingress_p2p_start_task_acks_and_creates_task() -> None:
+    """注入 PilotIngressService 后 P2P 文本任务消息应：发 ACK + 创建 task。"""
+    from agent_hub.pilot.services.ingress import (
+        IngressIntent,
+        PilotIngressService,
+    )
+
+    orchestrator, repo = _make_orchestrator()
+    fake_client = FakeFeishuClient()
+    proc = FeishuWebhookProcessor(verification_token="vt")
+    ingress = PilotIngressService()  # 无 pipeline/queries，纯 classify
+    service = FeishuWebhookService(
+        processor=proc,
+        orchestrator=orchestrator,
+        repository=repo,
+        client=fake_client,
+        ingress=ingress,
+    )
+
+    result = await service.handle(
+        _text_message_event(
+            token="vt",
+            text="帮我做一份 PPT，主题是季度复盘",
+            event_id="evt-p2p-start",
+            message_id="om_start_1",
+        ),
+    )
+
+    assert result.outcome is FeishuWebhookOutcome.ACCEPTED
+    assert result.intent is IngressIntent.START_TASK
+    assert result.handle is not None, "START_TASK 必须创建 task"
+    assert result.ack_message_id is not None, "START_TASK 必须发 ACK"
+    assert len(fake_client.sent_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_service_with_ingress_group_mention_start_task_acks() -> None:
+    """群聊 @bot 的任务文本走 START_TASK 分支也要发 ACK。"""
+    from agent_hub.pilot.services.ingress import (
+        IngressIntent,
+        PilotIngressService,
+    )
+
+    orchestrator, repo = _make_orchestrator()
+    fake_client = FakeFeishuClient()
+    proc = FeishuWebhookProcessor(
+        verification_token="vt",
+        bot_open_id="ou_bot",
+        require_mention_in_group=True,
+    )
+    ingress = PilotIngressService()
+    service = FeishuWebhookService(
+        processor=proc,
+        orchestrator=orchestrator,
+        repository=repo,
+        client=fake_client,
+        ingress=ingress,
+    )
+
+    result = await service.handle(
+        _text_message_event(
+            token="vt",
+            chat_type="group",
+            text="@_user_1 帮我生成一份产品 PPT",
+            mentions=[{"key": "@_user_1", "id": {"open_id": "ou_bot"}}],
+            event_id="evt-grp-start",
+            message_id="om_grp_1",
+        ),
+    )
+
+    assert result.outcome is FeishuWebhookOutcome.ACCEPTED
+    assert result.intent is IngressIntent.START_TASK
+    assert result.handle is not None
+    assert result.ack_message_id is not None
+    assert len(fake_client.sent_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_service_with_ingress_ordinary_qa_does_not_create_task() -> None:
+    """ORDINARY_QA / IGNORE 路径不会创建 task，也不应发 ACK。"""
+    from agent_hub.pilot.services.ingress import (
+        IngressIntent,
+        PilotIngressService,
+    )
+
+    orchestrator, repo = _make_orchestrator()
+    fake_client = FakeFeishuClient()
+    proc = FeishuWebhookProcessor(verification_token="vt")
+    ingress = PilotIngressService()  # 没有 pipeline → QA 退化为无 reply_text
+    service = FeishuWebhookService(
+        processor=proc,
+        orchestrator=orchestrator,
+        repository=repo,
+        client=fake_client,
+        ingress=ingress,
+    )
+
+    result = await service.handle(
+        _text_message_event(
+            token="vt",
+            text="你好啊",
+            event_id="evt-qa-1",
+            message_id="om_qa_1",
+        ),
+    )
+
+    assert result.handle is None
+    assert result.ack_message_id is None
+    assert result.intent in (IngressIntent.ORDINARY_QA, IngressIntent.IGNORE)
+
+
 # ── Card callback (M5 审批) ────────────────────────
 
 

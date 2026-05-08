@@ -150,3 +150,135 @@ async def test_upload_share_accepts_brief_upstream() -> None:
     assert result.success is True, result.error
     assert client.uploaded_files[0]["file_name"] == "intro.md"
     assert client.uploaded_files[0]["size"] == len("# Hello\n自我介绍".encode())
+
+
+# ── real.slide.render_pptx 真实渲染回归 ─────────────
+
+
+@pytest.mark.asyncio
+async def test_render_pptx_produces_real_zip_pptx() -> None:
+    """真实链路应输出一个合法的 zip/PPTX 字节流，而非 PPTX_STUB。"""
+    import io
+    import zipfile
+
+    registry = SkillRegistry()
+    register_real_chain_skills(registry, feishu_client=None, artifact_reader=None)
+
+    spec = {
+        "title": "季度复盘",
+        "slide_count": 2,
+        "slides": [
+            {"title": "封面", "bullets": ["议题"]},
+            {"title": "结果", "bullets": ["指标 A", "指标 B"]},
+        ],
+    }
+    result = await registry.invoke(
+        SkillInvocation(
+            skill_name="real.slide.render_pptx",
+            params={
+                "title": "季度复盘",
+                "input_artifacts": {
+                    "spec": {
+                        "artifact_id": "art-spec",
+                        "type": "slide_spec",
+                        "content": spec,
+                    }
+                },
+            },
+        )
+    )
+
+    assert result.success is True, result.error
+    payload = result.artifact_payload
+    assert payload is not None
+    pptx_bytes = payload["content"]
+    # 1) PPTX 是 zip 容器，前两字节必为 "PK"，且不能是 PPTX_STUB
+    assert pptx_bytes[:2] == b"PK"
+    assert not pptx_bytes.startswith(b"PPTX_STUB")
+    # 2) 能被 zipfile 解开，且包含 [Content_Types].xml
+    with zipfile.ZipFile(io.BytesIO(pptx_bytes)) as zf:
+        names = zf.namelist()
+        assert "[Content_Types].xml" in names
+        assert any(n.startswith("ppt/slides/") for n in names)
+    # 3) metadata 不应是 stub
+    assert payload["metadata"]["is_stub"] is False
+    assert payload["metadata"]["renderer"] == "python-pptx"
+    assert result.output["is_stub"] is False
+
+
+@pytest.mark.asyncio
+async def test_render_pptx_strict_when_dependency_missing(monkeypatch) -> None:
+    """模拟 python-pptx 缺失：默认严格抛错，不再悄悄交付 stub。"""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name.startswith("pptx"):
+            raise ImportError(f"simulated missing: {name}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+    monkeypatch.delenv("PILOT_ALLOW_PPTX_STUB", raising=False)
+
+    registry = SkillRegistry()
+    register_real_chain_skills(registry, feishu_client=None, artifact_reader=None)
+
+    result = await registry.invoke(
+        SkillInvocation(
+            skill_name="real.slide.render_pptx",
+            params={
+                "title": "x",
+                "input_artifacts": {
+                    "spec": {
+                        "artifact_id": "a",
+                        "type": "slide_spec",
+                        "content": {"slides": [{"title": "t", "bullets": []}]},
+                    }
+                },
+            },
+        )
+    )
+    assert result.success is False
+    assert "python-pptx" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_render_pptx_explicit_stub_fallback(monkeypatch) -> None:
+    """显式 PILOT_ALLOW_PPTX_STUB=true 时，缺依赖应降级为 stub 并标注。"""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name.startswith("pptx"):
+            raise ImportError(f"simulated missing: {name}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+    monkeypatch.setenv("PILOT_ALLOW_PPTX_STUB", "true")
+
+    registry = SkillRegistry()
+    register_real_chain_skills(registry, feishu_client=None, artifact_reader=None)
+
+    result = await registry.invoke(
+        SkillInvocation(
+            skill_name="real.slide.render_pptx",
+            params={
+                "title": "x",
+                "input_artifacts": {
+                    "spec": {
+                        "artifact_id": "a",
+                        "type": "slide_spec",
+                        "content": {"slides": [{"title": "t", "bullets": []}]},
+                    }
+                },
+            },
+        )
+    )
+    assert result.success is True
+    payload = result.artifact_payload
+    assert payload is not None
+    assert payload["content"].startswith(b"PPTX_STUB::")
+    assert payload["metadata"]["is_stub"] is True
+    assert payload["metadata"]["renderer"] == "pptx-stub"

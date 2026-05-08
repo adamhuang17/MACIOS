@@ -25,10 +25,10 @@
 | `FEISHU_REQUIRE_MENTION_IN_GROUP=true` | 群聊必须 `@bot` | 演示群推荐打开 |
 | `PILOT_ENABLED=true` | 启用 Pilot 编排 | |
 | `PILOT_STORE_PATH=./data/pilot.sqlite3` | 任务持久化 | 演示用固定路径 |
-| `PILOT_SKILL_MODE=real_chain` | 真实 PPT 链路 | 演示必选；fake 仅用于测试 |
+| `PILOT_USE_REAL_CHAIN=true` | 真实 PPT 链路 | 演示必选；`false` 走 fake 链路仅用于测试 |
 | `PILOT_PROGRESS_HEARTBEAT_INTERVAL_SECONDS=5` | 长任务心跳写入频率 | Dashboard 显示“最近活动 5 秒前” |
 | `PUBLIC_BASE_URL=http://127.0.0.1:8080` | Dashboard URL 模板 | 局域网演示改本机 IP |
-| `FEISHU_DRIVE_FOLDER_TOKEN` | 上传到的飞书云空间 folder | 已验证可用 |
+| `FEISHU_DEFAULT_FOLDER_TOKEN` | 上传到的飞书云空间 folder | 已验证可用 |
 | `FEISHU_ADMIN_OPEN_ID` | 演示账号 open_id | 用于自动加协作权限 |
 | `FEISHU_PROGRESS_MIN_INTERVAL_SECONDS=5` | 飞书进度消息最小间隔 | 防止长任务心跳刷屏 |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | LLM 网关 | 演示用 OpenAI 兼容端点 |

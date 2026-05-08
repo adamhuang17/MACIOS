@@ -149,8 +149,8 @@ class FeishuWebhookService:
                     intent=decision.intent,
                     reply_message_id=reply_id,
                 )
-            # START_TASK fallthrough
-                ack_message_id = await self._maybe_ack(message)
+            # START_TASK fallthrough：先发 ACK，再提交任务
+            ack_message_id = await self._maybe_ack(message)
             handle = await self._submit_task(
                 message,
                 plan_profile=decision.plan_profile,

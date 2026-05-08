@@ -326,6 +326,99 @@ def test_unknown_artifact_returns_404(client: TestClient) -> None:
     assert client.get("/api/pilot/artifacts/missing").status_code == 404
 
 
+def test_unknown_artifact_download_returns_404(client: TestClient) -> None:
+    assert (
+        client.get("/api/pilot/artifacts/missing/download").status_code == 404
+    )
+
+
+@pytest.fixture()
+def auto_client(tmp_path) -> Iterator[TestClient]:
+    """跑完整 fake demo 链路的客户端：自动审批 + 临时 artifact 目录。"""
+    settings = Settings(
+        api_keys=["test-key"],
+        pilot_enabled=True,
+        pilot_store_path="",
+        pilot_demo_mode=True,
+        pilot_auto_approve_writes=True,
+        pilot_admin_token="admin-secret",
+        public_base_url="",
+        feishu_enabled=False,
+        feishu_use_long_conn=False,
+        pilot_use_real_gateway=False,
+        pilot_use_real_chain=False,
+        pilot_artifact_dir=str(tmp_path / "artifacts"),
+    )
+    runtime = build_pilot_runtime(settings)
+
+    @asynccontextmanager
+    async def lifespan(_a: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            await runtime.aclose()
+
+    fa = FastAPI(lifespan=lifespan)
+    fa.include_router(build_pilot_router(runtime))
+    fa.state.runtime = runtime
+    with TestClient(fa) as c:
+        yield c
+
+
+def test_artifact_download_returns_attachment(
+    auto_client: TestClient,
+) -> None:
+    """直接通过 runtime 注入一个带 content 的 artifact 后下载。"""
+    import asyncio
+
+    from agent_hub.pilot.domain.enums import ArtifactStatus, ArtifactType
+    from agent_hub.pilot.domain.models import Artifact
+
+    runtime = auto_client.app.state.runtime
+    handle = _submit(auto_client)
+    detail = auto_client.get(f"/api/pilot/tasks/{handle['task_id']}").json()
+    workspace_id = detail["task"]["workspace_id"]
+    task_id = detail["task"]["task_id"]
+
+    pptx_bytes = b"PK\x03\x04fake-pptx-bytes-for-test"
+
+    async def _seed() -> str:
+        artifact = Artifact(
+            workspace_id=workspace_id,
+            task_id=task_id,
+            step_id=None,
+            type=ArtifactType.PPTX,
+            title="季度复盘.pptx",
+            artifact_version=1,
+            mime_type=(
+                "application/vnd.openxmlformats-officedocument"
+                ".presentationml.presentation"
+            ),
+            storage_key="memory://placeholder",
+            status=ArtifactStatus.GENERATED,
+        )
+        await runtime.repository.save(artifact, expected_version=None)
+        runtime.artifacts._memory_blobs[artifact.artifact_id] = pptx_bytes  # noqa: SLF001
+        bound = artifact.model_copy(update={
+            "storage_key": f"memory://{artifact.artifact_id}",
+            "uri": f"memory://{artifact.artifact_id}",
+        })
+        await runtime.repository.save(bound, expected_version=artifact.version)
+        return artifact.artifact_id
+
+    artifact_id = asyncio.new_event_loop().run_until_complete(_seed())
+
+    resp = auto_client.get(f"/api/pilot/artifacts/{artifact_id}/download")
+    assert resp.status_code == 200, resp.text
+    assert resp.content == pptx_bytes
+    disp = resp.headers.get("content-disposition", "")
+    assert "attachment" in disp.lower()
+    assert "filename*=UTF-8''" in disp
+    assert resp.headers.get("content-type", "").startswith(
+        "application/vnd.openxmlformats-officedocument",
+    )
+
+
 # ── 管理员路由 ──────────────────────────────────────
 
 

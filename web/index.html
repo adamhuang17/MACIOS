@@ -813,17 +813,24 @@ function renderArtifactCard(a) {
     actions.push(`<a href="${escapeHtml(a.uri)}" target="_blank" rel="noopener">
       <button class="ghost tiny">查看源</button></a>`);
   }
+  // 本地下载兜底：Drive 上传失败 / 没配 share_url 时也能拿到真实文件。
+  const downloadUrl = `${API}/artifacts/${encodeURIComponent(a.artifact_id)}/download`;
+  const downloadLabel = a.type === 'pptx' ? '下载 PPTX' : '下载';
+  actions.push(`<a href="${escapeHtml(downloadUrl)}" download>
+    <button class="ghost tiny">${downloadLabel}</button></a>`);
   if (canPreview(a)) {
     actions.push(`<button class="ghost tiny" onclick="togglePreview('${escapeHtml(a.artifact_id)}')">预览</button>`);
   }
   const sizeHint = a.metadata && (a.metadata.size_bytes || a.metadata.bytes);
   const slideCount = a.metadata && (a.metadata.slide_count || a.metadata.pages);
+  const isStub = a.metadata && a.metadata.is_stub === true;
   const subParts = [
     badge(ARTIFACT_STATUS, a.status),
     `<span class="badge muted">v${a.artifact_version}</span>`,
   ];
   if (slideCount) subParts.push(`<span class="badge muted">${slideCount} 页</span>`);
   if (sizeHint) subParts.push(`<span class="badge muted">${formatBytes(sizeHint)}</span>`);
+  if (isStub) subParts.push(`<span class="badge warn" title="未启用真实 PPTX 渲染（stub 兜底）">stub</span>`);
   return `
     <div class="artifact" data-art="${escapeHtml(a.artifact_id)}">
       <div class="head">

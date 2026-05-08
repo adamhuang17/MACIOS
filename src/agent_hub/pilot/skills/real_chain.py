@@ -6,9 +6,10 @@
 
 - ``real.slide.generate_spec`` —— 基于 brief 文本确定性地生成 SlideSpec
   JSON（章节、要点、layout）。
-- ``real.slide.render_pptx`` —— 调用 ``python-pptx`` 渲染为 PPTX 字节流；
-  若运行环境未安装 ``python-pptx``，自动降级为占位的二进制 stub，
-  artifact 仍可入库以便后续 Drive upload 拿到 ``content``。
+- ``real.slide.render_pptx`` —— 调用 ``python-pptx`` 渲染为 PPTX 字节流。
+  ``python-pptx`` 已固化为主依赖；若运行环境异常缺失，默认严格抛错，
+  仅当显式设置环境变量 ``PILOT_ALLOW_PPTX_STUB=true`` 时才降级为 stub
+  字节流（artifact metadata 会带 ``is_stub=True`` 明确标注）。
 - ``real.drive.upload_share`` —— 通过 :class:`FeishuClientProtocol`
   上传 PPTX 到飞书云空间并返回 share_url。
 
@@ -19,6 +20,7 @@
 from __future__ import annotations
 
 import json
+import os
 from io import BytesIO
 from typing import Any
 
@@ -140,19 +142,38 @@ def _make_real_slidespec_skill() -> tuple[SkillSpec, Any]:
 # ── real.slide.render_pptx ─────────────────────────
 
 
-def _render_pptx_bytes(slide_spec: dict[str, Any]) -> bytes:
-    """渲染 PPTX，未装 python-pptx 时输出可被识别的 stub 字节流。
+def _render_pptx_bytes(slide_spec: dict[str, Any]) -> tuple[bytes, bool]:
+    """渲染 PPTX；返回 ``(bytes, is_stub)``。
 
-    stub 仍是合法 zip-like 字节，能存入 artifact store 并供后续上传。
+    - 默认严格模式：``python-pptx`` 已是主依赖，导入失败时抛
+      :class:`RuntimeError`，让调用方上报真实错误而不是悄悄交付假产物。
+    - 仅当显式设置 ``PILOT_ALLOW_PPTX_STUB=true`` 时才在缺依赖场景下
+      降级为 ``PPTX_STUB::`` 占位字节流，并通过返回值 ``is_stub=True``
+      告知上游在 metadata 中明确标注。
     """
-    try:  # pragma: no cover - 可选依赖
+    try:
         from pptx import Presentation  # type: ignore[import-not-found]
         from pptx.util import Inches, Pt  # type: ignore[import-not-found]
-    except ImportError:
-        # 占位实现：把 spec JSON 当 bytes，真实渲染留待依赖安装后启用。
-        return ("PPTX_STUB::" + json.dumps(slide_spec, ensure_ascii=False)).encode(
+    except ImportError as exc:
+        allow_stub = os.environ.get("PILOT_ALLOW_PPTX_STUB", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if not allow_stub:
+            raise RuntimeError(
+                "real.slide.render_pptx 需要 python-pptx，但当前环境未安装；"
+                "请安装 python-pptx，或显式设置 PILOT_ALLOW_PPTX_STUB=true "
+                "走 stub 兜底（仅用于演示/测试，不会生成可打开的 PPTX）。",
+            ) from exc
+        logger.warning(
+            "real.slide.render_pptx.fallback_to_stub",
+            reason="python-pptx not installed",
+        )
+        stub = ("PPTX_STUB::" + json.dumps(slide_spec, ensure_ascii=False)).encode(
             "utf-8",
         )
+        return stub, True
 
     prs = Presentation()
     blank_layout = prs.slide_layouts[5]
@@ -172,7 +193,7 @@ def _render_pptx_bytes(slide_spec: dict[str, Any]) -> bytes:
                 p.font.size = Pt(18)
     buf = BytesIO()
     prs.save(buf)
-    return buf.getvalue()
+    return buf.getvalue(), False
 
 
 def _make_real_pptx_render_skill() -> tuple[SkillSpec, Any]:
@@ -212,12 +233,12 @@ def _make_real_pptx_render_skill() -> tuple[SkillSpec, Any]:
                 },
             )
 
-        pptx_bytes = _render_pptx_bytes(slide_spec)
+        pptx_bytes, is_stub = _render_pptx_bytes(slide_spec)
 
         return SkillResult(
             skill_name=inv.skill_name,
             success=True,
-            output={"byte_size": len(pptx_bytes)},
+            output={"byte_size": len(pptx_bytes), "is_stub": is_stub},
             artifact_payload={
                 "type": ArtifactType.PPTX.value,
                 "title": f"{title}.pptx",
@@ -228,7 +249,8 @@ def _make_real_pptx_render_skill() -> tuple[SkillSpec, Any]:
                 "content": pptx_bytes,
                 "metadata": {
                     "slide_count": slide_spec.get("slide_count", 0),
-                    "renderer": "python-pptx-or-stub",
+                    "renderer": "pptx-stub" if is_stub else "python-pptx",
+                    "is_stub": is_stub,
                 },
             },
         )

@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -227,6 +228,69 @@ def build_pilot_router(runtime: PilotRuntime) -> APIRouter:
         return {"kind": "binary", "artifact_id": artifact_id,
                 "mime_type": art.mime_type, "size_bytes": len(content),
                 "share_url": art.share_url, "uri": art.uri}
+
+    @router.get("/artifacts/{artifact_id}/download")
+    async def download_artifact(artifact_id: str):  # noqa: ANN202
+        """二进制 / 文件型 artifact 的真实下载入口。
+
+        - 落盘 artifact：返回 :class:`FileResponse`，浏览器会按
+          ``mime_type`` 与 ``filename`` 触发下载/预览；
+        - 内存 / bytes artifact：直接 :class:`Response` 回传字节流；
+        - text/json：以原文 + 合理 ``content-type`` 下载，方便取证。
+        """
+        from urllib.parse import quote
+
+        art = await runtime.queries.get_artifact(artifact_id)
+        if art is None:
+            raise HTTPException(
+                status_code=404, detail=f"unknown artifact: {artifact_id}",
+            )
+
+        # 文件名：优先用 artifact.title，去掉路径分隔符做最小净化。
+        raw_name = (art.title or f"{artifact_id}").strip() or artifact_id
+        safe_name = raw_name.replace("/", "_").replace("\\", "_")
+        # RFC 5987：filename* 用 UTF-8 编码 + filename 兜底 ASCII。
+        ascii_fallback = safe_name.encode("ascii", "ignore").decode("ascii") or "artifact"
+        disposition = (
+            f'attachment; filename="{ascii_fallback}"; '
+            f"filename*=UTF-8''{quote(safe_name)}"
+        )
+        media_type = art.mime_type or "application/octet-stream"
+
+        # 优先走磁盘路径，避免大文件读到内存。
+        store = runtime.artifacts
+        key = art.storage_key or ""
+        if key and not key.startswith("memory://"):
+            disk_path = store._resolve_disk_path(key, art.uri)  # noqa: SLF001
+            if disk_path is not None and disk_path.exists():
+                return FileResponse(
+                    path=str(disk_path),
+                    media_type=media_type,
+                    filename=safe_name,
+                    headers={"Content-Disposition": disposition},
+                )
+
+        content = await store.read_content_by_id(artifact_id)
+        if content is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"artifact has no content to download: {artifact_id}",
+            )
+        if isinstance(content, bytes):
+            body: bytes = content
+        elif isinstance(content, str):
+            body = content.encode("utf-8")
+        else:
+            import json as _json
+
+            body = _json.dumps(content, ensure_ascii=False).encode("utf-8")
+            media_type = media_type or "application/json"
+
+        return Response(
+            content=body,
+            media_type=media_type,
+            headers={"Content-Disposition": disposition},
+        )
 
     # ── approvals ─────────────────────────────────
 
