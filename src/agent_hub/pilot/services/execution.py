@@ -258,6 +258,10 @@ class ExecutionEngine:
         any_blocked = False
 
         for layer in layers:
+            # Pilot intentionally keeps steps in the same DAG layer sequential.
+            # Approval requests, artifact writes, and resume semantics are
+            # business state transitions; emitting several of them at once would
+            # make the Feishu approval flow harder to explain and recover.
             for step in layer:
                 latest = await self._repo.get_step(step.step_id) or step
                 # 跳过终态（成功/已跳过/已取消）

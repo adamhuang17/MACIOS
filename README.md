@@ -1,6 +1,6 @@
 # Agent-Hub
 
-> 面向多用户、多终端场景的 Agent 协作中台。仓库同时包含两层能力：
+> 面向飞书办公场景的 Agent 任务运行时：把 IM 中的模糊任务请求转成可审批、可追踪、可恢复的结构化执行流。仓库同时包含两层能力：
 >
 > 1. 通用 Agent 执行内核：结构化路由、DAG 编排、ReAct 推理、RAG、记忆、安全与流式响应。
 > 2. Agent-Pilot 业务运行时：任务规划、审批、产物、事件流、Dashboard，以及可选的飞书接入与真实 PPT 链路。
@@ -15,7 +15,7 @@
 
 Agent-Hub 可以按两个层次理解：
 
-1. **通用多 Agent 引擎**
+1. **通用 Agent 执行内核**
    核心入口是 `DecisionRouter + AgentPipeline + LLMAgent / RetrievalAgent / ToolAgent / ReflectionAgent + Memory + PromptGuard`，负责"理解请求、拆解任务、调用工具、检索知识、写入记忆、流式返回"。
 2. **Agent-Pilot 业务运行时**
    Pilot 在通用引擎之上补齐任务化与协作化能力：`Workspace / Task / Plan / PlanStep / Approval / Artifact / ExecutionEvent`，并提供 Dashboard、SSE、审批恢复、飞书入口与 PPT 产物链路。
@@ -39,7 +39,7 @@ Agent-Hub 可以按两个层次理解：
 | 能力 | 说明 |
 | ------ | ------ |
 | 结构化路由 | `DecisionRouter` 使用 OpenAI 兼容 function calling 输出 `RoutingDecision` 与子任务 DAG |
-| DAG 并行执行 | `AgentPipeline` 与 `ExecutionEngine` 都按依赖分层，并用 `asyncio.gather` 执行同层任务 |
+| DAG 并行执行 | 通用 `AgentPipeline` 按依赖分层，并用 `asyncio.gather` 并行执行同层子任务；Pilot `ExecutionEngine` 也做 DAG 分层，但业务步骤在层内顺序推进，以保证审批、产物和恢复状态一致 |
 | ReAct 工具推理 | `LLMAgent` 支持 Thought → Action → Observation 循环，并记录 `react_trace` |
 | 混合检索 RAG | 稠密检索、BM25 稀疏检索与 RRF 融合排序 |
 | LangGraph 反思检索 | `ReflectionAgent` 实现 retrieve → evaluate → rewrite → generate 容错工作流 |
@@ -53,7 +53,8 @@ Agent-Hub 可以按两个层次理解：
 
 这份 README 尽量只描述代码里已经存在、且可运行的能力。当前边界如下：
 
-- 主编排仍是自研 DAG + `asyncio.gather`，不是用 LangGraph 驱动全系统。
+- 通用 AgentPipeline 的主编排是自研 DAG + `asyncio.gather`，不是用 LangGraph 驱动全系统。
+- Pilot 业务执行引擎优先保证审批状态一致性：它按 DAG 层推进，但同层 step 当前是顺序执行；DAG 并行压测只对应通用 AgentPipeline 的调度效果，不代表飞书审批全链路端到端耗时。
 - LangGraph 目前只用于 `reflection_agent` 的检索纠错子流程。
 - 飞书已经接入，但钉钉、QQ、OpenClaw 等其它连接器仍未落地。
 - Docker 默认是**本地保底演示模式**：`FEISHU_ENABLED=false`、`PILOT_USE_REAL_CHAIN=false`，保证没有飞书凭据时也能稳定跑通 Dashboard + Pilot。
@@ -466,6 +467,7 @@ pytest tests/test_guard.py -q
 
 ```bash
 python scripts/offline_verify.py
+python scripts/benchmark_dag.py --scenarios 50 --rounds 1
 python scripts/benchmark.py
 python scripts/evaluate.py
 ```

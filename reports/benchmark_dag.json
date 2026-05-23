@@ -1,0 +1,926 @@
+{
+  "generated_at": "2026-05-23T10:08:52.896193+00:00",
+  "scope": "generic AgentPipeline DAG scheduler, not Pilot approval flow",
+  "config": {
+    "scenarios": 50,
+    "rounds": 1,
+    "seed": 20260523,
+    "time_scale": 1.0
+  },
+  "summary": {
+    "scenario_count": 50,
+    "avg_serial_ms": 356.28,
+    "avg_dag_ms": 137.89,
+    "overall_speedup": 2.584,
+    "overall_reduction_pct": 61.3,
+    "mean_scenario_reduction_pct": 61.29,
+    "p50_reduction_pct": 61.96,
+    "p90_reduction_pct": 64.64,
+    "min_reduction_pct": 51.88,
+    "max_reduction_pct": 66.59,
+    "avg_layer_count": 4,
+    "avg_max_layer_width": 4
+  },
+  "results": [
+    {
+      "name": "office_task_001",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 269.3,
+      "expected_dag_ms": 129.6,
+      "measured_serial_ms": 347.57,
+      "measured_dag_ms": 123.72,
+      "speedup": 2.809,
+      "reduction_pct": 64.4,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_002",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 275.8,
+      "expected_dag_ms": 128.5,
+      "measured_serial_ms": 343.03,
+      "measured_dag_ms": 123.08,
+      "speedup": 2.787,
+      "reduction_pct": 64.12,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_003",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 264.2,
+      "expected_dag_ms": 135.2,
+      "measured_serial_ms": 343.71,
+      "measured_dag_ms": 140.9,
+      "speedup": 2.439,
+      "reduction_pct": 59.01,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_004",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 296.4,
+      "expected_dag_ms": 137.8,
+      "measured_serial_ms": 388.39,
+      "measured_dag_ms": 156.43,
+      "speedup": 2.483,
+      "reduction_pct": 59.72,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_005",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 286.6,
+      "expected_dag_ms": 135.6,
+      "measured_serial_ms": 360.78,
+      "measured_dag_ms": 138.15,
+      "speedup": 2.611,
+      "reduction_pct": 61.71,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_006",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 294.4,
+      "expected_dag_ms": 144.9,
+      "measured_serial_ms": 374.97,
+      "measured_dag_ms": 138.13,
+      "speedup": 2.715,
+      "reduction_pct": 63.16,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_007",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 248.2,
+      "expected_dag_ms": 116.8,
+      "measured_serial_ms": 340.62,
+      "measured_dag_ms": 123.77,
+      "speedup": 2.752,
+      "reduction_pct": 63.66,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_008",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 288.1,
+      "expected_dag_ms": 140.4,
+      "measured_serial_ms": 359.11,
+      "measured_dag_ms": 125.59,
+      "speedup": 2.859,
+      "reduction_pct": 65.03,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_009",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 287.3,
+      "expected_dag_ms": 134.8,
+      "measured_serial_ms": 354.95,
+      "measured_dag_ms": 125.03,
+      "speedup": 2.839,
+      "reduction_pct": 64.78,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_010",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 264.2,
+      "expected_dag_ms": 119.9,
+      "measured_serial_ms": 324.19,
+      "measured_dag_ms": 153.95,
+      "speedup": 2.106,
+      "reduction_pct": 52.51,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_011",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 270.0,
+      "expected_dag_ms": 124.8,
+      "measured_serial_ms": 360.01,
+      "measured_dag_ms": 142.13,
+      "speedup": 2.533,
+      "reduction_pct": 60.52,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_012",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 291.8,
+      "expected_dag_ms": 140.2,
+      "measured_serial_ms": 372.59,
+      "measured_dag_ms": 139.64,
+      "speedup": 2.668,
+      "reduction_pct": 62.52,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_013",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 291.7,
+      "expected_dag_ms": 137.7,
+      "measured_serial_ms": 372.3,
+      "measured_dag_ms": 124.4,
+      "speedup": 2.993,
+      "reduction_pct": 66.59,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_014",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 298.8,
+      "expected_dag_ms": 142.2,
+      "measured_serial_ms": 357.1,
+      "measured_dag_ms": 122.93,
+      "speedup": 2.905,
+      "reduction_pct": 65.57,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_015",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 295.3,
+      "expected_dag_ms": 153.5,
+      "measured_serial_ms": 358.39,
+      "measured_dag_ms": 126.71,
+      "speedup": 2.828,
+      "reduction_pct": 64.64,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_016",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 257.1,
+      "expected_dag_ms": 130.9,
+      "measured_serial_ms": 294.09,
+      "measured_dag_ms": 107.51,
+      "speedup": 2.736,
+      "reduction_pct": 63.44,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_017",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 291.2,
+      "expected_dag_ms": 136.3,
+      "measured_serial_ms": 372.16,
+      "measured_dag_ms": 171.52,
+      "speedup": 2.17,
+      "reduction_pct": 53.91,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_018",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 295.9,
+      "expected_dag_ms": 144.8,
+      "measured_serial_ms": 373.18,
+      "measured_dag_ms": 154.84,
+      "speedup": 2.41,
+      "reduction_pct": 58.51,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_019",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 286.8,
+      "expected_dag_ms": 136.0,
+      "measured_serial_ms": 342.87,
+      "measured_dag_ms": 124.81,
+      "speedup": 2.747,
+      "reduction_pct": 63.6,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_020",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 289.4,
+      "expected_dag_ms": 137.1,
+      "measured_serial_ms": 356.9,
+      "measured_dag_ms": 140.24,
+      "speedup": 2.545,
+      "reduction_pct": 60.71,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_021",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 292.4,
+      "expected_dag_ms": 140.4,
+      "measured_serial_ms": 341.13,
+      "measured_dag_ms": 125.67,
+      "speedup": 2.715,
+      "reduction_pct": 63.16,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_022",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 272.5,
+      "expected_dag_ms": 134.8,
+      "measured_serial_ms": 341.54,
+      "measured_dag_ms": 138.19,
+      "speedup": 2.472,
+      "reduction_pct": 59.54,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_023",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 278.3,
+      "expected_dag_ms": 131.1,
+      "measured_serial_ms": 358.07,
+      "measured_dag_ms": 154.39,
+      "speedup": 2.319,
+      "reduction_pct": 56.88,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_024",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 298.9,
+      "expected_dag_ms": 131.5,
+      "measured_serial_ms": 357.57,
+      "measured_dag_ms": 141.54,
+      "speedup": 2.526,
+      "reduction_pct": 60.42,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_025",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 282.1,
+      "expected_dag_ms": 131.0,
+      "measured_serial_ms": 358.73,
+      "measured_dag_ms": 140.86,
+      "speedup": 2.547,
+      "reduction_pct": 60.73,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_026",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 278.7,
+      "expected_dag_ms": 133.7,
+      "measured_serial_ms": 342.39,
+      "measured_dag_ms": 123.24,
+      "speedup": 2.778,
+      "reduction_pct": 64.01,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_027",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 305.6,
+      "expected_dag_ms": 144.7,
+      "measured_serial_ms": 391.61,
+      "measured_dag_ms": 140.53,
+      "speedup": 2.787,
+      "reduction_pct": 64.11,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_028",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 295.9,
+      "expected_dag_ms": 138.7,
+      "measured_serial_ms": 370.46,
+      "measured_dag_ms": 139.87,
+      "speedup": 2.649,
+      "reduction_pct": 62.25,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_029",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 272.1,
+      "expected_dag_ms": 133.1,
+      "measured_serial_ms": 347.31,
+      "measured_dag_ms": 139.61,
+      "speedup": 2.488,
+      "reduction_pct": 59.8,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_030",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 286.7,
+      "expected_dag_ms": 139.6,
+      "measured_serial_ms": 356.44,
+      "measured_dag_ms": 155.3,
+      "speedup": 2.295,
+      "reduction_pct": 56.43,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_031",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 287.6,
+      "expected_dag_ms": 136.2,
+      "measured_serial_ms": 342.39,
+      "measured_dag_ms": 123.96,
+      "speedup": 2.762,
+      "reduction_pct": 63.8,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_032",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 281.9,
+      "expected_dag_ms": 128.8,
+      "measured_serial_ms": 369.85,
+      "measured_dag_ms": 141.28,
+      "speedup": 2.618,
+      "reduction_pct": 61.8,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_033",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 266.8,
+      "expected_dag_ms": 128.6,
+      "measured_serial_ms": 328.44,
+      "measured_dag_ms": 124.92,
+      "speedup": 2.629,
+      "reduction_pct": 61.97,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_034",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 280.6,
+      "expected_dag_ms": 140.0,
+      "measured_serial_ms": 340.92,
+      "measured_dag_ms": 124.55,
+      "speedup": 2.737,
+      "reduction_pct": 63.46,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_035",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 302.1,
+      "expected_dag_ms": 137.4,
+      "measured_serial_ms": 372.14,
+      "measured_dag_ms": 139.56,
+      "speedup": 2.666,
+      "reduction_pct": 62.5,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_036",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 301.2,
+      "expected_dag_ms": 135.3,
+      "measured_serial_ms": 372.33,
+      "measured_dag_ms": 139.89,
+      "speedup": 2.662,
+      "reduction_pct": 62.43,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_037",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 294.3,
+      "expected_dag_ms": 143.1,
+      "measured_serial_ms": 370.98,
+      "measured_dag_ms": 156.29,
+      "speedup": 2.374,
+      "reduction_pct": 57.87,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_038",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 276.4,
+      "expected_dag_ms": 127.1,
+      "measured_serial_ms": 356.96,
+      "measured_dag_ms": 139.8,
+      "speedup": 2.553,
+      "reduction_pct": 60.84,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_039",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 287.9,
+      "expected_dag_ms": 140.2,
+      "measured_serial_ms": 343.68,
+      "measured_dag_ms": 142.65,
+      "speedup": 2.409,
+      "reduction_pct": 58.49,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_040",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 287.4,
+      "expected_dag_ms": 148.3,
+      "measured_serial_ms": 356.22,
+      "measured_dag_ms": 171.4,
+      "speedup": 2.078,
+      "reduction_pct": 51.88,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_041",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 289.1,
+      "expected_dag_ms": 133.1,
+      "measured_serial_ms": 354.79,
+      "measured_dag_ms": 125.65,
+      "speedup": 2.824,
+      "reduction_pct": 64.59,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_042",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 277.4,
+      "expected_dag_ms": 134.6,
+      "measured_serial_ms": 355.39,
+      "measured_dag_ms": 141.51,
+      "speedup": 2.511,
+      "reduction_pct": 60.18,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_043",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 283.5,
+      "expected_dag_ms": 129.5,
+      "measured_serial_ms": 357.06,
+      "measured_dag_ms": 142.05,
+      "speedup": 2.514,
+      "reduction_pct": 60.22,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_044",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 313.5,
+      "expected_dag_ms": 152.0,
+      "measured_serial_ms": 388.7,
+      "measured_dag_ms": 138.79,
+      "speedup": 2.801,
+      "reduction_pct": 64.29,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_045",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 276.6,
+      "expected_dag_ms": 133.8,
+      "measured_serial_ms": 370.86,
+      "measured_dag_ms": 138.06,
+      "speedup": 2.686,
+      "reduction_pct": 62.77,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_046",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 293.4,
+      "expected_dag_ms": 140.0,
+      "measured_serial_ms": 358.8,
+      "measured_dag_ms": 125.64,
+      "speedup": 2.856,
+      "reduction_pct": 64.98,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_047",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 276.7,
+      "expected_dag_ms": 133.4,
+      "measured_serial_ms": 325.11,
+      "measured_dag_ms": 123.67,
+      "speedup": 2.629,
+      "reduction_pct": 61.96,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_048",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 281.3,
+      "expected_dag_ms": 138.2,
+      "measured_serial_ms": 356.44,
+      "measured_dag_ms": 155.23,
+      "speedup": 2.296,
+      "reduction_pct": 56.45,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_049",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 289.2,
+      "expected_dag_ms": 147.6,
+      "measured_serial_ms": 374.81,
+      "measured_dag_ms": 155.68,
+      "speedup": 2.408,
+      "reduction_pct": 58.46,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "office_task_050",
+      "task_count": 9,
+      "layer_count": 4,
+      "max_layer_width": 4,
+      "expected_serial_ms": 290.4,
+      "expected_dag_ms": 136.5,
+      "measured_serial_ms": 355.8,
+      "measured_dag_ms": 141.14,
+      "speedup": 2.521,
+      "reduction_pct": 60.33,
+      "layer_shape": [
+        2,
+        4,
+        2,
+        1
+      ]
+    }
+  ]
+}

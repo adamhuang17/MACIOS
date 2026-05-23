@@ -1,0 +1,2 @@
+{"timestamp":"2026-05-09T02:39:02.760053Z","level":"INFO","fields":{"message":"python/3.10.12; huggingface_hub/1.14.0; hf_xet/1.5.0; , xet-core revision 6ed5a00-modified"},"filename":"D:\\a\\xet-core\\xet-core\\xet_runtime\\src\\logging\\init.rs","line_number":65}
+{"timestamp":"2026-05-09T02:39:02.760112Z","level":"INFO","fields":{"message":"hf_xet logging configured."},"filename":"src\\logging.rs","line_number":36}
