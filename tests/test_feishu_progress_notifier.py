@@ -281,6 +281,52 @@ async def test_feishu_progress_notifier_throttles_heartbeat_messages() -> None:
 
 
 @pytest.mark.asyncio
+async def test_feishu_progress_notifier_caps_messages_per_task() -> None:
+    store = InMemoryEventStore()
+    repo = PilotRepository(store)
+    client = FakeFeishuClient()
+    notifier = FeishuProgressNotifier(
+        repo,
+        client,
+        min_interval_seconds=1,
+        max_messages_per_task=2,
+    )
+
+    workspace = Workspace(
+        title="Feishu task",
+        source_channel="feishu",
+        source_conversation_id="oc_chat_1",
+        feishu_chat_id="oc_chat_1",
+        created_by="ou_user",
+        members=["ou_user"],
+        status=WorkspaceStatus.ACTIVE,
+    )
+    task = Task(
+        workspace_id=workspace.workspace_id,
+        origin_text="Build a deck",
+        requester_id="ou_user",
+    )
+    await repo.save(workspace, expected_version=None)
+    await repo.save(task, expected_version=None)
+
+    for idx in range(3):
+        notifier.handle_event(ExecutionEvent(
+            workspace_id=workspace.workspace_id,
+            trace_id=task.trace_id,
+            task_id=task.task_id,
+            type=EventType.TASK_PROGRESS,
+            message=f"milestone {idx}",
+            payload={"phase": "step_running", "kind": "milestone"},
+        ))
+
+    await _wait_for_messages(client, 2)
+    await asyncio.sleep(0.05)
+    await notifier.aclose()
+
+    assert len(client.sent_messages) == 2
+
+
+@pytest.mark.asyncio
 async def test_feishu_progress_notifier_preserves_order_per_task() -> None:
     store = InMemoryEventStore()
     repo = PilotRepository(store)

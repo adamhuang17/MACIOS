@@ -11,6 +11,7 @@ from agent_hub.rag.hybrid_ranker import rrf_merge
 from agent_hub.rag.pipeline import RAGPipeline
 from agent_hub.rag.query_rewriter import QueryRewriter
 from agent_hub.rag.relevance_evaluator import RelevanceEvaluator
+from agent_hub.rag.redis_store import RAGRedisStore
 from agent_hub.rag.sparse_retriever import SparseRetriever
 from agent_hub.rag.vector_store import ChunkDoc, SearchResult, VectorStore
 
@@ -20,6 +21,7 @@ __all__ = [
     "Embedder",
     "QueryRewriter",
     "RAGPipeline",
+    "RAGRedisStore",
     "RelevanceEvaluator",
     "SearchResult",
     "SparseRetriever",

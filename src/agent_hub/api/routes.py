@@ -23,6 +23,7 @@ from sse_starlette.sse import EventSourceResponse
 from agent_hub.api.feishu_routes import build_feishu_router
 from agent_hub.api.pilot_routes import build_pilot_router
 from agent_hub.api.pilot_runtime import PilotRuntime, build_pilot_runtime
+from agent_hub.api.rag_routes import build_rag_router
 from agent_hub.config.settings import Settings, get_settings
 from agent_hub.core.enums import UserRole
 from agent_hub.core.models import TaskInput, UserContext
@@ -87,6 +88,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 注册进程内 TraceStore（供 /trace/{id} 查询）
     set_trace_store(InMemoryTraceStore())
     _pipeline = AgentPipeline(_settings)
+    if not getattr(app.state, "rag_router_mounted", False):
+        app.include_router(build_rag_router(lambda: _get_pipeline().rag_pipeline))
+        app.state.rag_router_mounted = True
 
     if _settings.pilot_enabled:
         _pilot_runtime = build_pilot_runtime(_settings, pipeline=_pipeline)
@@ -141,6 +145,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
     if _pilot_runtime is not None:
         await _pilot_runtime.aclose()
+    if _pipeline is not None:
+        await _pipeline.rag_pipeline.close()
     _pipeline = None
     _pilot_runtime = None
     logger.info("api_stopped")

@@ -111,6 +111,7 @@ class FeishuWebhookProcessor:
         verification_token: str = "",
         encrypt_key: str = "",
         bot_open_id: str = "",
+        ignore_self_messages: bool = True,
         require_mention_in_group: bool = True,
         trigger_keywords: set[str] | None = None,
         dedup_ttl_seconds: int = 600,
@@ -118,7 +119,8 @@ class FeishuWebhookProcessor:
     ) -> None:
         self._verification_token = verification_token
         self._encrypt_key = encrypt_key
-        self._bot_open_id = bot_open_id
+        self._bot_open_id = bot_open_id.strip()
+        self._ignore_self_messages = ignore_self_messages
         self._require_mention_in_group = require_mention_in_group
         self._keywords = trigger_keywords or set()
         self._dedup = _TtlLru(
@@ -247,6 +249,17 @@ class FeishuWebhookProcessor:
 
         message = self._apply_mention_flag(message)
 
+        if self._should_skip_self_message(message):
+            logger.info(
+                "feishu.webhook.self_message_ignored",
+                event_id=message.event_id,
+                message_id=message.message_id,
+                chat_id=message.chat_id,
+            )
+            return FeishuWebhookResult(
+                outcome=FeishuWebhookOutcome.IGNORED,
+                reason="bot self message",
+            )
         if self._should_skip_mention(message):
             return FeishuWebhookResult(
                 outcome=FeishuWebhookOutcome.IGNORED,
@@ -328,6 +341,13 @@ class FeishuWebhookProcessor:
         if bot_mentioned == message.bot_mentioned:
             return message
         return message.model_copy(update={"bot_mentioned": bot_mentioned})
+
+    def _should_skip_self_message(self, message: FeishuInboundMessage) -> bool:
+        if not self._ignore_self_messages:
+            return False
+        if self._bot_open_id and message.sender_id.strip() == self._bot_open_id:
+            return True
+        return message.sender_type.strip().lower() in {"app", "bot"}
 
     def _should_skip_mention(self, message: FeishuInboundMessage) -> bool:
         if not self._require_mention_in_group:
@@ -440,6 +460,7 @@ def _normalize_inbound_message(
         message_type = FeishuMessageType.UNKNOWN
 
     sender_id_obj = sender_obj.get("sender_id") or {}
+    sender_type = str(sender_obj.get("sender_type") or "")
     sender_id = (
         sender_id_obj.get("open_id")
         or sender_id_obj.get("union_id")
@@ -488,6 +509,7 @@ def _normalize_inbound_message(
         message_type=message_type,
         sender_id=str(sender_id),
         sender_id_type=sender_id_type,
+        sender_type=sender_type,
         text=text,
         mentions=mentions,
         attachments=attachments,

@@ -69,6 +69,7 @@ def _text_message_event(
     text: str = "请帮我写一份介绍",
     chat_id: str = "oc_chat_1",
     sender_id: str = "ou_sender_1",
+    sender_type: str = "user",
     chat_type: str = "p2p",
     event_id: str = "evt-001",
     message_id: str = "om_msg_1",
@@ -88,7 +89,7 @@ def _text_message_event(
         "event": {
             "sender": {
                 "sender_id": {"open_id": sender_id, "user_id": "u1"},
-                "sender_type": "user",
+                "sender_type": sender_type,
             },
             "message": {
                 "message_id": message_id,
@@ -138,6 +139,44 @@ async def test_processor_normalize_text_message() -> None:
     assert result.message.chat_type is FeishuChatType.P2P
     assert result.message.tenant_key == "tenant1"
     assert result.message.event_id == "evt-001"
+
+
+@pytest.mark.asyncio
+async def test_processor_ignores_bot_self_message() -> None:
+    proc = FeishuWebhookProcessor(
+        verification_token="vt",
+        bot_open_id="ou_bot",
+    )
+    result = await proc.handle_payload(
+        _text_message_event(
+            token="vt",
+            sender_id="ou_bot",
+            event_id="evt-self",
+            message_id="om_self",
+            text="bot reply",
+        ),
+    )
+
+    assert result.outcome is FeishuWebhookOutcome.IGNORED
+    assert result.reason == "bot self message"
+
+
+@pytest.mark.asyncio
+async def test_processor_ignores_app_sender_message() -> None:
+    proc = FeishuWebhookProcessor(verification_token="vt")
+    result = await proc.handle_payload(
+        _text_message_event(
+            token="vt",
+            sender_id="ou_unknown_app",
+            sender_type="app",
+            event_id="evt-app-sender",
+            message_id="om_app_sender",
+            text="app reply",
+        ),
+    )
+
+    assert result.outcome is FeishuWebhookOutcome.IGNORED
+    assert result.reason == "bot self message"
 
 
 @pytest.mark.asyncio

@@ -127,8 +127,10 @@ class AgentPipeline:
         self._registry = ToolRegistry()
         self._registry.register_defaults()
 
-        # RAG Pipeline（延迟初始化，避免启动时下载嵌入模型）
+        # RAG Pipeline is cheap to construct: embedding weights and database
+        # connections are opened lazily on first use.
         self._rag_pipeline: RAGPipeline | None = None
+        self._ensure_rag_pipeline()
 
         # Agent 实例
         llm_agent = LLMAgent(
@@ -177,6 +179,11 @@ class AgentPipeline:
 
                 self._cache = CacheLayer(
                     redis_url=settings.redis_url,
+                    embedder=(
+                        self._rag_pipeline.embedder
+                        if self._rag_pipeline is not None
+                        else None
+                    ),
                     ttl=settings.cache_ttl,
                     semantic_threshold=settings.semantic_cache_threshold,
                 )
@@ -198,6 +205,7 @@ class AgentPipeline:
         logger.info(
             "pipeline_initialized",
             agents=list(self._agents.keys()),
+            rag_enabled=self._rag_pipeline is not None,
             cache_enabled=self._cache is not None,
             rate_limiter_enabled=self._rate_limiter is not None,
         )
@@ -211,6 +219,19 @@ class AgentPipeline:
     @property
     def rate_limiter(self) -> RateLimiter | None:
         return self._rate_limiter
+
+    @property
+    def rag_pipeline(self) -> RAGPipeline:
+        return self._ensure_rag_pipeline()
+
+    def _ensure_rag_pipeline(self) -> RAGPipeline:
+        if self._rag_pipeline is None:
+            self._rag_pipeline = RAGPipeline(self._settings)
+        for agent_name in ("retrieval_agent", "reflection_agent"):
+            agent = getattr(self, "_agents", {}).get(agent_name)
+            if agent is not None and hasattr(agent, "_rag"):
+                agent._rag = self._rag_pipeline
+        return self._rag_pipeline
 
     def _try_inject_vector_memory(self) -> None:
         """尝试装配 VectorMemory + ConflictDetector + MemoryOperator。

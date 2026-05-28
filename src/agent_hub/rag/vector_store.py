@@ -1,11 +1,9 @@
-"""pgvector 向量存储抽象层。
-
-HNSW 索引，按 user_id / namespace 分区，CRUD 操作。
-使用 psycopg 异步连接池。
-"""
+"""PostgreSQL/pgvector storage for enterprise RAG knowledge chunks."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -19,40 +17,59 @@ logger = structlog.get_logger(__name__)
 
 @dataclass
 class ChunkDoc:
-    """文档切块。"""
+    """A normalized document chunk ready for embedding and retrieval."""
 
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
     chunk_index: int = 0
+    document_id: str | None = None
+    content_hash: str | None = None
 
 
 @dataclass
 class SearchResult:
-    """检索结果。"""
+    """A single retrieval result."""
 
     content: str
     score: float
     metadata: dict[str, Any] = field(default_factory=dict)
     chunk_id: int | None = None
+    namespace: str | None = None
+    document_id: str | None = None
 
 
 class VectorStore:
-    """pgvector 向量存储层。
+    """PostgreSQL + pgvector canonical store.
 
-    Args:
-        pg_dsn: PostgreSQL 连接字符串。
-        dimension: 向量维度（从 Embedder 获取）。
+    The store keeps document metadata in ``rag_documents`` and chunk vectors in
+    ``rag_chunks``. Chunks are upserted idempotently by
+    ``(user_id, namespace, document_id, chunk_index)`` so re-ingestion replaces
+    the previous version instead of duplicating rows.
     """
 
-    TABLE_NAME = "rag_chunks"
+    CHUNK_TABLE = "rag_chunks"
+    DOCUMENT_TABLE = "rag_documents"
+    # Compatibility with older code/tests.
+    TABLE_NAME = CHUNK_TABLE
 
-    def __init__(self, pg_dsn: str, dimension: int = 1024) -> None:
+    def __init__(
+        self,
+        pg_dsn: str,
+        dimension: int = 1024,
+        *,
+        min_pool_size: int = 1,
+        max_pool_size: int = 10,
+    ) -> None:
+        if dimension <= 0:
+            raise ValueError("Vector dimension must be greater than zero")
         self._pg_dsn = pg_dsn
         self._dimension = dimension
+        self._min_pool_size = min_pool_size
+        self._max_pool_size = max_pool_size
         self._pool: AsyncConnectionPool | None = None
+        self._schema_ready = False
 
     async def _get_pool(self) -> AsyncConnectionPool:
-        """获取或创建连接池。"""
         if self._pool is not None:
             return self._pool
 
@@ -60,43 +77,148 @@ class VectorStore:
 
         self._pool = psycopg_pool.AsyncConnectionPool(
             self._pg_dsn,
-            min_size=2,
-            max_size=10,
+            min_size=self._min_pool_size,
+            max_size=self._max_pool_size,
             open=False,
         )
         await self._pool.open()
         return self._pool
 
     async def ensure_schema(self) -> None:
-        """创建表和 HNSW 索引（幂等操作）。"""
+        """Create or migrate the pgvector schema."""
+        if self._schema_ready:
+            return
         pool = await self._get_pool()
         async with pool.connection() as conn:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-            await conn.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
-                    id          SERIAL PRIMARY KEY,
-                    user_id     TEXT NOT NULL,
-                    namespace   TEXT NOT NULL,
-                    content     TEXT NOT NULL,
-                    metadata    JSONB DEFAULT '{{}}'::jsonb,
-                    embedding   vector({self._dimension}),
-                    created_at  TIMESTAMPTZ DEFAULT NOW()
+            await conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.DOCUMENT_TABLE} (
+                    id           BIGSERIAL PRIMARY KEY,
+                    user_id      TEXT NOT NULL,
+                    namespace    TEXT NOT NULL,
+                    document_id  TEXT NOT NULL,
+                    doc_type     TEXT NOT NULL DEFAULT 'text',
+                    metadata     JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                    content_hash TEXT NOT NULL DEFAULT '',
+                    chunk_count  INTEGER NOT NULL DEFAULT 0,
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (user_id, namespace, document_id)
                 )
-            """)
-            # HNSW 索引
-            await conn.execute(f"""
-                CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_hnsw
-                ON {self.TABLE_NAME}
+                """
+            )
+            await conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.CHUNK_TABLE} (
+                    id           BIGSERIAL PRIMARY KEY,
+                    user_id      TEXT NOT NULL,
+                    namespace    TEXT NOT NULL,
+                    document_id  TEXT NOT NULL,
+                    chunk_index  INTEGER NOT NULL DEFAULT 0,
+                    content      TEXT NOT NULL,
+                    content_hash TEXT NOT NULL DEFAULT '',
+                    metadata     JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                    embedding    vector({self._dimension}) NOT NULL,
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+
+            # Migrate early skeleton tables in-place where possible.
+            await conn.execute(
+                f"ALTER TABLE {self.CHUNK_TABLE} ADD COLUMN IF NOT EXISTS document_id TEXT"
+            )
+            await conn.execute(
+                f"""
+                ALTER TABLE {self.CHUNK_TABLE}
+                ADD COLUMN IF NOT EXISTS chunk_index INTEGER NOT NULL DEFAULT 0
+                """
+            )
+            await conn.execute(
+                f"""
+                ALTER TABLE {self.CHUNK_TABLE}
+                ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''
+                """
+            )
+            await conn.execute(
+                f"""
+                ALTER TABLE {self.CHUNK_TABLE}
+                ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                """
+            )
+            await conn.execute(
+                f"UPDATE {self.CHUNK_TABLE} SET document_id = namespace WHERE document_id IS NULL"
+            )
+            await conn.execute(
+                f"""
+                WITH ranked AS (
+                    SELECT
+                        id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY user_id, namespace, document_id
+                            ORDER BY id
+                        ) - 1 AS rn
+                    FROM {self.CHUNK_TABLE}
+                )
+                UPDATE {self.CHUNK_TABLE} AS chunk
+                SET chunk_index = ranked.rn
+                FROM ranked
+                WHERE chunk.id = ranked.id
+                  AND chunk.chunk_index = 0
+                """
+            )
+            await conn.execute(
+                f"ALTER TABLE {self.CHUNK_TABLE} ALTER COLUMN document_id SET NOT NULL"
+            )
+
+            await conn.execute(
+                f"""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_{self.CHUNK_TABLE}_uniq
+                ON {self.CHUNK_TABLE} (user_id, namespace, document_id, chunk_index)
+                """
+            )
+            await conn.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{self.CHUNK_TABLE}_hnsw
+                ON {self.CHUNK_TABLE}
                 USING hnsw (embedding vector_cosine_ops)
                 WITH (m = 16, ef_construction = 200)
-            """)
-            # 组合 B-tree 索引用于分区过滤
-            await conn.execute(f"""
-                CREATE INDEX IF NOT EXISTS idx_{self.TABLE_NAME}_user_ns
-                ON {self.TABLE_NAME} (user_id, namespace)
-            """)
+                """
+            )
+            await conn.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{self.CHUNK_TABLE}_user_ns
+                ON {self.CHUNK_TABLE} (user_id, namespace)
+                """
+            )
+            await conn.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{self.CHUNK_TABLE}_doc
+                ON {self.CHUNK_TABLE} (user_id, namespace, document_id)
+                """
+            )
+            await conn.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{self.CHUNK_TABLE}_metadata_gin
+                ON {self.CHUNK_TABLE} USING gin (metadata)
+                """
+            )
+            await conn.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{self.DOCUMENT_TABLE}_user_ns
+                ON {self.DOCUMENT_TABLE} (user_id, namespace)
+                """
+            )
             await conn.commit()
-            logger.info("vector_store_schema_ensured", table=self.TABLE_NAME)
+            logger.info(
+                "vector_store_schema_ensured",
+                chunk_table=self.CHUNK_TABLE,
+                document_table=self.DOCUMENT_TABLE,
+                dimension=self._dimension,
+            )
+            self._schema_ready = True
 
     async def upsert(
         self,
@@ -104,38 +226,131 @@ class VectorStore:
         namespace: str,
         chunks: list[ChunkDoc],
         embeddings: list[list[float]],
+        *,
+        document_id: str | None = None,
+        doc_type: str = "text",
+        metadata: dict[str, Any] | None = None,
+        replace: bool = False,
     ) -> int:
-        """批量入库文档切块（连同向量）。
+        """Compatibility wrapper for chunk upsert."""
+        resolved_document_id = document_id
+        if resolved_document_id is None and chunks:
+            resolved_document_id = chunks[0].document_id or str(
+                chunks[0].metadata.get("document_id", "")
+            )
+        return await self.upsert_document(
+            user_id=user_id,
+            namespace=namespace,
+            document_id=resolved_document_id or namespace,
+            chunks=chunks,
+            embeddings=embeddings,
+            doc_type=doc_type,
+            metadata=metadata,
+            replace=replace,
+        )
 
-        Args:
-            user_id: 用户 ID。
-            namespace: 命名空间（文档名 / 来源标识）。
-            chunks: 文档切块列表。
-            embeddings: 对应的向量列表。
-
-        Returns:
-            插入的行数。
-        """
+    async def upsert_document(
+        self,
+        user_id: str,
+        namespace: str,
+        document_id: str,
+        chunks: list[ChunkDoc],
+        embeddings: list[list[float]],
+        *,
+        doc_type: str = "text",
+        metadata: dict[str, Any] | None = None,
+        replace: bool = False,
+    ) -> int:
+        """Upsert one logical document and all of its embedded chunks."""
         if not chunks:
             return 0
+        if len(chunks) != len(embeddings):
+            raise ValueError("chunks and embeddings must have the same length")
 
         pool = await self._get_pool()
-        import json
+        metadata = metadata or {}
+        doc_hash = self._hash_text("\n\n".join(chunk.content for chunk in chunks))
+
         async with pool.connection() as conn:
+            if replace:
+                await conn.execute(
+                    f"""
+                    DELETE FROM {self.CHUNK_TABLE}
+                    WHERE user_id = %s AND namespace = %s AND document_id = %s
+                    """,
+                    (user_id, namespace, document_id),
+                )
+
+            await conn.execute(
+                f"""
+                INSERT INTO {self.DOCUMENT_TABLE}
+                    (
+                        user_id,
+                        namespace,
+                        document_id,
+                        doc_type,
+                        metadata,
+                        content_hash,
+                        chunk_count
+                    )
+                VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s)
+                ON CONFLICT (user_id, namespace, document_id)
+                DO UPDATE SET
+                    doc_type = EXCLUDED.doc_type,
+                    metadata = EXCLUDED.metadata,
+                    content_hash = EXCLUDED.content_hash,
+                    chunk_count = EXCLUDED.chunk_count,
+                    updated_at = NOW()
+                """,
+                (
+                    user_id,
+                    namespace,
+                    document_id,
+                    doc_type,
+                    self._json(metadata),
+                    doc_hash,
+                    len(chunks),
+                ),
+            )
+
             async with conn.cursor() as cur:
-                for chunk, emb in zip(chunks, embeddings, strict=False):
+                for chunk, embedding in zip(chunks, embeddings, strict=True):
+                    self._validate_embedding(embedding)
+                    chunk_doc_id = chunk.document_id or document_id
+                    content_hash = chunk.content_hash or self._hash_text(chunk.content)
+                    chunk_metadata = {
+                        **metadata,
+                        **chunk.metadata,
+                        "namespace": namespace,
+                        "document_id": chunk_doc_id,
+                        "chunk_index": chunk.chunk_index,
+                        "content_hash": content_hash,
+                    }
                     await cur.execute(
                         f"""
-                        INSERT INTO {self.TABLE_NAME}
-                            (user_id, namespace, content, metadata, embedding)
-                        VALUES (%s, %s, %s, %s, %s)
+                        INSERT INTO {self.CHUNK_TABLE}
+                            (
+                                user_id, namespace, document_id, chunk_index,
+                                content, content_hash, metadata, embedding
+                            )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::vector)
+                        ON CONFLICT (user_id, namespace, document_id, chunk_index)
+                        DO UPDATE SET
+                            content = EXCLUDED.content,
+                            content_hash = EXCLUDED.content_hash,
+                            metadata = EXCLUDED.metadata,
+                            embedding = EXCLUDED.embedding,
+                            updated_at = NOW()
                         """,
                         (
                             user_id,
                             namespace,
+                            chunk_doc_id,
+                            chunk.chunk_index,
                             chunk.content,
-                            json.dumps(chunk.metadata, ensure_ascii=False),
-                            str(emb),
+                            content_hash,
+                            self._json(chunk_metadata),
+                            self._format_vector(embedding),
                         ),
                     )
             await conn.commit()
@@ -144,7 +359,9 @@ class VectorStore:
             "vector_store_upsert",
             user_id=user_id,
             namespace=namespace,
+            document_id=document_id,
             count=len(chunks),
+            replace=replace,
         )
         return len(chunks)
 
@@ -155,55 +372,36 @@ class VectorStore:
         namespace: str | None = None,
         top_k: int = 5,
     ) -> list[SearchResult]:
-        """Dense（余弦相似度）检索。
-
-        Args:
-            query_embedding: 查询向量。
-            user_id: 用户 ID。
-            namespace: 命名空间（None 表示搜索该用户所有空间）。
-            top_k: 返回的最大结果数。
-
-        Returns:
-            按相似度降序排列的 SearchResult 列表。
-        """
+        """Dense cosine search through pgvector."""
+        self._validate_embedding(query_embedding)
         pool = await self._get_pool()
-        import json
+        emb = self._format_vector(query_embedding)
 
-        where_clause = "WHERE user_id = %s"
-        params: list[Any] = [user_id]
-        if namespace is not None:
-            where_clause += " AND namespace = %s"
-            params.append(namespace)
-
-        params.append(str(query_embedding))
-        params.append(top_k)
+        if namespace is None:
+            sql = f"""
+                SELECT id, content, metadata, namespace, document_id,
+                       1 - (embedding <=> %(emb)s::vector) AS score
+                FROM {self.CHUNK_TABLE}
+                WHERE user_id = %(uid)s
+                ORDER BY embedding <=> %(emb)s::vector
+                LIMIT %(topk)s
+            """
+            params: dict[str, Any] = {"uid": user_id, "emb": emb, "topk": top_k}
+        else:
+            sql = f"""
+                SELECT id, content, metadata, namespace, document_id,
+                       1 - (embedding <=> %(emb)s::vector) AS score
+                FROM {self.CHUNK_TABLE}
+                WHERE user_id = %(uid)s AND namespace = %(ns)s
+                ORDER BY embedding <=> %(emb)s::vector
+                LIMIT %(topk)s
+            """
+            params = {"uid": user_id, "ns": namespace, "emb": emb, "topk": top_k}
 
         async with pool.connection() as conn, conn.cursor() as cur:
-            await cur.execute(
-                f"""
-                    SELECT id, content, metadata,
-                           1 - (embedding <=> %s::vector) AS score
-                    FROM {self.TABLE_NAME}
-                    {where_clause}
-                    ORDER BY embedding <=> %s::vector
-                    LIMIT %s
-                    """,
-                (*params[:-2], params[-2], params[-2], params[-1]),
-            )
+            await cur.execute(sql, params)
             rows = await cur.fetchall()
-
-        # 修正参数顺序：WHERE 子句参数 + 两次 embedding 参数 + limit
-        # 重写为更清晰的拼接
-        results: list[SearchResult] = []
-        for row in rows:
-            meta = row[2] if isinstance(row[2], dict) else json.loads(row[2] or "{}")
-            results.append(SearchResult(
-                content=row[1],
-                score=float(row[3]),
-                metadata=meta,
-                chunk_id=row[0],
-            ))
-        return results
+        return [self._row_to_result(row) for row in rows]
 
     async def search_dense_raw(
         self,
@@ -212,86 +410,194 @@ class VectorStore:
         namespace: str | None = None,
         top_k: int = 5,
     ) -> list[SearchResult]:
-        """Dense 检索（更清晰的参数绑定实现）。"""
+        """Backward-compatible alias for ``search_dense``."""
+        return await self.search_dense(query_embedding, user_id, namespace, top_k)
+
+    async def list_chunks(
+        self,
+        user_id: str,
+        namespace: str | None = None,
+        *,
+        document_id: str | None = None,
+        limit: int = 20_000,
+    ) -> list[ChunkDoc]:
+        """Load chunks for sparse-index rebuilding."""
         pool = await self._get_pool()
-        import json
-
-        emb_str = str(query_embedding)
-
+        clauses = ["user_id = %(uid)s"]
+        params: dict[str, Any] = {"uid": user_id, "limit": limit}
         if namespace is not None:
-            sql = f"""
-                SELECT id, content, metadata,
-                       1 - (embedding <=> %(emb)s::vector) AS score
-                FROM {self.TABLE_NAME}
-                WHERE user_id = %(uid)s AND namespace = %(ns)s
-                ORDER BY embedding <=> %(emb)s::vector
-                LIMIT %(topk)s
-            """
-            params_dict = {
-                "uid": user_id,
-                "ns": namespace,
-                "emb": emb_str,
-                "topk": top_k,
-            }
-        else:
-            sql = f"""
-                SELECT id, content, metadata,
-                       1 - (embedding <=> %(emb)s::vector) AS score
-                FROM {self.TABLE_NAME}
-                WHERE user_id = %(uid)s
-                ORDER BY embedding <=> %(emb)s::vector
-                LIMIT %(topk)s
-            """
-            params_dict = {
-                "uid": user_id,
-                "emb": emb_str,
-                "topk": top_k,
-            }
+            clauses.append("namespace = %(ns)s")
+            params["ns"] = namespace
+        if document_id is not None:
+            clauses.append("document_id = %(doc)s")
+            params["doc"] = document_id
 
+        where_clause = " AND ".join(clauses)
+        sql = f"""
+            SELECT id, content, metadata, namespace, document_id, chunk_index, content_hash
+            FROM {self.CHUNK_TABLE}
+            WHERE {where_clause}
+            ORDER BY namespace, document_id, chunk_index
+            LIMIT %(limit)s
+        """
         async with pool.connection() as conn, conn.cursor() as cur:
-            await cur.execute(sql, params_dict)
+            await cur.execute(sql, params)
             rows = await cur.fetchall()
 
-        results: list[SearchResult] = []
+        chunks: list[ChunkDoc] = []
         for row in rows:
-            meta = row[2] if isinstance(row[2], dict) else json.loads(row[2] or "{}")
-            results.append(SearchResult(
-                content=row[1],
-                score=float(row[3]),
-                metadata=meta,
-                chunk_id=row[0],
-            ))
-        return results
+            metadata = self._parse_metadata(row[2])
+            metadata.setdefault("chunk_id", row[0])
+            metadata.setdefault("namespace", row[3])
+            metadata.setdefault("document_id", row[4])
+            metadata.setdefault("chunk_index", row[5])
+            metadata.setdefault("content_hash", row[6])
+            chunks.append(
+                ChunkDoc(
+                    content=row[1],
+                    metadata=metadata,
+                    chunk_index=int(row[5]),
+                    document_id=row[4],
+                    content_hash=row[6],
+                )
+            )
+        return chunks
 
-    async def delete_by_namespace(self, user_id: str, namespace: str) -> int:
-        """按命名空间删除所有切块。
+    async def list_namespaces(self, user_id: str) -> list[str]:
+        """Return namespaces that contain chunks for one user."""
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute(
+                f"""
+                SELECT DISTINCT namespace
+                FROM {self.CHUNK_TABLE}
+                WHERE user_id = %s
+                ORDER BY namespace
+                """,
+                (user_id,),
+            )
+            rows = await cur.fetchall()
+        return [str(row[0]) for row in rows]
 
-        Args:
-            user_id: 用户 ID。
-            namespace: 命名空间。
-
-        Returns:
-            删除的行数。
-        """
+    async def delete_by_document(
+        self,
+        user_id: str,
+        namespace: str,
+        document_id: str,
+    ) -> int:
+        """Delete one logical document and its chunks."""
         pool = await self._get_pool()
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    f"DELETE FROM {self.TABLE_NAME} WHERE user_id = %s AND namespace = %s",
-                    (user_id, namespace),
+                    f"""
+                    DELETE FROM {self.CHUNK_TABLE}
+                    WHERE user_id = %s AND namespace = %s AND document_id = %s
+                    """,
+                    (user_id, namespace, document_id),
                 )
-                deleted = cur.rowcount
+                deleted = cur.rowcount or 0
+                await cur.execute(
+                    f"""
+                    DELETE FROM {self.DOCUMENT_TABLE}
+                    WHERE user_id = %s AND namespace = %s AND document_id = %s
+                    """,
+                    (user_id, namespace, document_id),
+                )
             await conn.commit()
         logger.info(
-            "vector_store_delete",
+            "vector_store_delete_document",
+            user_id=user_id,
+            namespace=namespace,
+            document_id=document_id,
+            deleted=deleted,
+        )
+        return deleted
+
+    async def delete_by_namespace(self, user_id: str, namespace: str) -> int:
+        """Delete all chunks/documents in a namespace."""
+        pool = await self._get_pool()
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"DELETE FROM {self.CHUNK_TABLE} WHERE user_id = %s AND namespace = %s",
+                    (user_id, namespace),
+                )
+                deleted = cur.rowcount or 0
+                await cur.execute(
+                    f"DELETE FROM {self.DOCUMENT_TABLE} WHERE user_id = %s AND namespace = %s",
+                    (user_id, namespace),
+                )
+            await conn.commit()
+        logger.info(
+            "vector_store_delete_namespace",
             user_id=user_id,
             namespace=namespace,
             deleted=deleted,
         )
-        return deleted or 0
+        return deleted
+
+    async def healthcheck(self) -> dict[str, Any]:
+        """Check PostgreSQL connectivity and pgvector availability."""
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute("SELECT 1")
+            await cur.fetchone()
+            await cur.execute(
+                "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
+            )
+            version_row = await cur.fetchone()
+        return {
+            "ok": True,
+            "dimension": self._dimension,
+            "pgvector": version_row[0] if version_row else None,
+            "chunk_table": self.CHUNK_TABLE,
+            "document_table": self.DOCUMENT_TABLE,
+        }
 
     async def close(self) -> None:
-        """关闭连接池。"""
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
+
+    def _validate_embedding(self, embedding: list[float]) -> None:
+        if len(embedding) != self._dimension:
+            raise ValueError(
+                f"Embedding dimension mismatch: expected {self._dimension}, "
+                f"got {len(embedding)}"
+            )
+
+    @staticmethod
+    def _format_vector(embedding: list[float]) -> str:
+        return "[" + ",".join(f"{float(value):.12g}" for value in embedding) + "]"
+
+    @staticmethod
+    def _json(value: dict[str, Any]) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _parse_metadata(raw: Any) -> dict[str, Any]:
+        if isinstance(raw, dict):
+            return raw
+        if raw is None:
+            return {}
+        return json.loads(raw)
+
+    @staticmethod
+    def _hash_text(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _row_to_result(cls, row: Any) -> SearchResult:
+        metadata = cls._parse_metadata(row[2])
+        metadata.setdefault("namespace", row[3])
+        metadata.setdefault("document_id", row[4])
+        metadata.setdefault("chunk_id", row[0])
+        return SearchResult(
+            content=row[1],
+            score=float(row[5]),
+            metadata=metadata,
+            chunk_id=int(row[0]),
+            namespace=row[3],
+            document_id=row[4],
+        )

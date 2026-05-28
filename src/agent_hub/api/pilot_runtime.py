@@ -215,6 +215,7 @@ def build_pilot_runtime(
             repo,
             feishu_client,
             min_interval_seconds=settings.feishu_progress_min_interval_seconds,
+            max_messages_per_task=settings.feishu_progress_max_messages_per_task,
         )
         publisher.add_handler(progress_notifier.handle_event)
     else:
@@ -306,6 +307,7 @@ def _maybe_build_feishu(
         verification_token=settings.feishu_verification_token,
         encrypt_key=settings.feishu_encrypt_key,
         bot_open_id=settings.feishu_bot_open_id,
+        ignore_self_messages=settings.feishu_ignore_self_messages,
         require_mention_in_group=settings.feishu_require_mention_in_group,
         trigger_keywords=settings.feishu_trigger_keyword_set,
         dedup_ttl_seconds=settings.feishu_webhook_dedup_ttl_seconds,

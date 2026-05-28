@@ -58,6 +58,8 @@ def rrf_merge(
             score=rrf_scores[doc_key],
             metadata=original.metadata,
             chunk_id=original.chunk_id,
+            namespace=original.namespace,
+            document_id=original.document_id,
         ))
 
     if top_k is not None:
@@ -70,6 +72,14 @@ def _doc_key(result: SearchResult) -> str:
 
     优先用 chunk_id，fallback 到 content hash。
     """
+    document_id = result.metadata.get("document_id") or result.document_id
+    chunk_index = result.metadata.get("chunk_index")
+    if document_id is not None and chunk_index is not None:
+        namespace = result.metadata.get("namespace") or result.namespace or ""
+        return f"doc_{namespace}_{document_id}_{chunk_index}"
+    content_hash = result.metadata.get("content_hash")
+    if content_hash:
+        return f"hash_{content_hash}"
     if result.chunk_id is not None:
         return f"chunk_{result.chunk_id}"
     return f"hash_{hash(result.content)}"

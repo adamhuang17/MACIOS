@@ -15,7 +15,7 @@ build/
 .vscode/
 
 # Obsidian user data (contains personal sessions)
-data/obsidian/
+data/
 test_obsidian/
 
 # OS

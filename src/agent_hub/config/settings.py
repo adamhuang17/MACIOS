@@ -78,11 +78,27 @@ class Settings(BaseSettings):
 
     # ── pgvector + Embedding ─────────────────────────
     pg_dsn: str = "postgresql://localhost:5432/agent_hub"
+    pg_pool_min_size: int = 1
+    pg_pool_max_size: int = 10
+    embedding_provider: str = "local"
     embedding_model: str = "BAAI/bge-large-zh-v1.5"
+    embedding_dimension: int = 1024
+    embedding_device: str = ""
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
+    embedding_batch_size: int = 32
+    embedding_normalize: bool = True
+    embedding_timeout_seconds: float = 30.0
     chunk_size: int = 512
     chunk_overlap: int = 64
     rag_top_k: int = 5
     rrf_k: int = 60
+    rag_redis_enabled: bool = True
+    rag_query_cache_enabled: bool = True
+    rag_query_cache_ttl: int = 300
+    rag_sparse_cache_enabled: bool = True
+    rag_sparse_cache_ttl: int = 86_400
+    rag_sparse_bootstrap_limit: int = 20_000
 
     # ── Obsidian 记忆持久化 ────────────────────────────
     obsidian_vault_path: str = "./data/obsidian"
@@ -139,15 +155,16 @@ class Settings(BaseSettings):
     # 启用真实 ModelGateway（OpenAI 兼容）；为 False 时仍走 FakeModelGateway。
     pilot_use_real_gateway: bool = False
     # 启用真实产物链（SlideSpec / PPTX / Drive）；False 时仍走 fake skills。
-    pilot_use_real_chain: bool = True
+    pilot_use_real_chain: bool = False
     # 长任务活动心跳间隔；用于 task.progress 事件与 Dashboard 实时活动感知。
     pilot_progress_heartbeat_interval_seconds: float = 15.0
     # 飞书端心跳消息最小发送间隔；避免长任务进度刷屏。
     feishu_progress_min_interval_seconds: float = 30.0
+    feishu_progress_max_messages_per_task: int = 20
 
     # ── M4 飞书 IM ───────────────────────────────────
     # 启用真实飞书入口（webhook + skills）；为 False 时只用 fake skills。
-    feishu_enabled: bool = True
+    feishu_enabled: bool = False
     feishu_app_id: str = ""
     feishu_app_secret: str = ""
     # 自建应用 / 应用商店应用；目前只校验存在，不区分鉴权差异。
@@ -171,6 +188,7 @@ class Settings(BaseSettings):
     feishu_drive_url_template: str = "https://www.feishu.cn/file/{file_token}"
     # 机器人 open_id，用于 mention 过滤；留空表示不强制要求 @bot。
     feishu_bot_open_id: str = ""
+    feishu_ignore_self_messages: bool = True
     # 触发任务的关键字（逗号分隔）；非空时只在文本包含任一关键字时建任务。
     feishu_trigger_keywords: str = ""
     # 是否需要 mention 机器人才触发（仅群聊生效）。
@@ -178,7 +196,7 @@ class Settings(BaseSettings):
     # webhook 路由路径（挂在主 app 下）。
     feishu_callback_path: str = "/api/feishu/webhook"
     # 长连接模式（无公网地址时使用）：True 时主动连接飞书 WebSocket 服务器
-    feishu_use_long_conn: bool = True
+    feishu_use_long_conn: bool = False
 
     # ── 文件路径 & 安全 ──────────────────────────────
     vm_shared_dir: str = "/mnt/shared"

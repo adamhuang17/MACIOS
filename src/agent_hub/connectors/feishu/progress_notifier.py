@@ -26,11 +26,15 @@ class FeishuProgressNotifier:
         client: FeishuClientProtocol,
         *,
         min_interval_seconds: float = 30.0,
+        max_messages_per_task: int = 20,
     ) -> None:
         self._repo = repository
         self._client = client
         self._min_interval_seconds = max(1.0, float(min_interval_seconds))
+        self._max_messages_per_task = max(0, int(max_messages_per_task))
         self._last_sent_at: dict[str, float] = {}
+        self._sent_counts: dict[str, int] = {}
+        self._limit_logged_tasks: set[str] = set()
         self._pending_approvals_by_task: dict[str, set[str]] = {}
         self._send_chains: dict[str, asyncio.Task[None]] = {}
         self._tasks: set[asyncio.Task[None]] = set()
@@ -60,6 +64,17 @@ class FeishuProgressNotifier:
             return
         if not _should_notify_progress(event):
             return
+        sent_count = self._sent_counts.get(task_id, 0)
+        if sent_count >= self._max_messages_per_task:
+            if task_id not in self._limit_logged_tasks:
+                self._limit_logged_tasks.add(task_id)
+                logger.warning(
+                    "feishu.progress_notify_limit_reached",
+                    task_id=task_id,
+                    max_messages_per_task=self._max_messages_per_task,
+                )
+            return
+        self._sent_counts[task_id] = sent_count + 1
         self._last_sent_at[task_id] = now
 
         previous = self._send_chains.get(task_id)
@@ -125,6 +140,8 @@ class FeishuProgressNotifier:
                 await task
         self._tasks.clear()
         self._send_chains.clear()
+        self._sent_counts.clear()
+        self._limit_logged_tasks.clear()
 
     async def _send(self, event: ExecutionEvent) -> None:
         workspace = await self._repo.get_workspace(event.workspace_id)

@@ -1,6 +1,7 @@
-"""BM25 稀疏检索。
+"""In-process BM25 sparse retriever.
 
-基于 rank_bm25 + jieba 分词，按 (user_id, namespace) 维护独立索引。
+Redis and PostgreSQL persistence are handled by ``RAGPipeline``. This class is a
+small, fast runtime index over already-loaded chunks.
 """
 
 from __future__ import annotations
@@ -15,19 +16,9 @@ logger = structlog.get_logger(__name__)
 
 
 class SparseRetriever:
-    """BM25 稀疏检索器。
-
-    为每个 ``(user_id, namespace)`` 组合维护一份独立的 BM25 索引。
-
-    Example::
-
-        retriever = SparseRetriever()
-        retriever.build_index("u1", "docs", chunks)
-        results = retriever.search("u1", "docs", "如何使用向量数据库", top_k=5)
-    """
+    """BM25 sparse retriever keyed by ``(user_id, namespace)``."""
 
     def __init__(self) -> None:
-        # key: (user_id, namespace) → (BM25Okapi, original_chunks)
         self._indices: dict[tuple[str, str], tuple[BM25Okapi, list[ChunkDoc]]] = {}
 
     def build_index(
@@ -36,17 +27,11 @@ class SparseRetriever:
         namespace: str,
         chunks: list[ChunkDoc],
     ) -> None:
-        """为给定命名空间构建 BM25 索引。
-
-        Args:
-            user_id: 用户 ID。
-            namespace: 命名空间。
-            chunks: 用于构建索引的文档切块。
-        """
+        chunks = [chunk for chunk in chunks if chunk.content.strip()]
         if not chunks:
             return
 
-        tokenized = [list(jieba.cut(c.content)) for c in chunks]
+        tokenized = [list(jieba.cut(chunk.content)) for chunk in chunks]
         bm25 = BM25Okapi(tokenized)
         self._indices[(user_id, namespace)] = (bm25, list(chunks))
         logger.info(
@@ -63,17 +48,6 @@ class SparseRetriever:
         query: str,
         top_k: int = 5,
     ) -> list[SearchResult]:
-        """BM25 检索。
-
-        Args:
-            user_id: 用户 ID。
-            namespace: 命名空间。
-            query: 查询文本。
-            top_k: 返回的最大结果数。
-
-        Returns:
-            按 BM25 分数降序排列的 SearchResult 列表。
-        """
         key = (user_id, namespace)
         if key not in self._indices:
             return []
@@ -81,25 +55,29 @@ class SparseRetriever:
         bm25, chunks = self._indices[key]
         query_tokens = list(jieba.cut(query))
         scores = bm25.get_scores(query_tokens)
-
-        # 取 Top-K（按分数降序）
-        indexed_scores: list[tuple[int, float]] = sorted(
-            enumerate(scores),
-            key=lambda x: x[1],
-            reverse=True,
-        )[:top_k]
+        ranked = sorted(enumerate(scores), key=lambda item: item[1], reverse=True)[:top_k]
 
         results: list[SearchResult] = []
-        for idx, score in indexed_scores:
+        for idx, score in ranked:
             if score <= 0:
                 continue
             chunk = chunks[idx]
-            results.append(SearchResult(
-                content=chunk.content,
-                score=float(score),
-                metadata=chunk.metadata,
-                chunk_id=idx,
-            ))
+            metadata = dict(chunk.metadata)
+            metadata.setdefault("namespace", namespace)
+            metadata.setdefault("chunk_index", chunk.chunk_index)
+            if chunk.document_id is not None:
+                metadata.setdefault("document_id", chunk.document_id)
+            chunk_id = self._coerce_chunk_id(metadata.get("chunk_id"), fallback=idx)
+            results.append(
+                SearchResult(
+                    content=chunk.content,
+                    score=float(score),
+                    metadata=metadata,
+                    chunk_id=chunk_id,
+                    namespace=str(metadata.get("namespace", namespace)),
+                    document_id=metadata.get("document_id"),
+                )
+            )
         return results
 
     def search_all_namespaces(
@@ -108,28 +86,27 @@ class SparseRetriever:
         query: str,
         top_k: int = 5,
     ) -> list[SearchResult]:
-        """跨该用户所有命名空间检索。
-
-        Args:
-            user_id: 用户 ID。
-            query: 查询文本。
-            top_k: 返回的最大结果数。
-
-        Returns:
-            按 BM25 分数降序排列的合并结果。
-        """
         all_results: list[SearchResult] = []
-        for (uid, ns) in self._indices:
+        for uid, namespace in list(self._indices):
             if uid == user_id:
-                all_results.extend(self.search(uid, ns, query, top_k))
+                all_results.extend(self.search(uid, namespace, query, top_k))
 
-        all_results.sort(key=lambda r: r.score, reverse=True)
+        all_results.sort(key=lambda result: result.score, reverse=True)
         return all_results[:top_k]
 
     def has_index(self, user_id: str, namespace: str) -> bool:
-        """判断是否已有索引。"""
         return (user_id, namespace) in self._indices
 
+    def namespaces(self, user_id: str) -> list[str]:
+        return [namespace for uid, namespace in self._indices if uid == user_id]
+
     def remove_index(self, user_id: str, namespace: str) -> None:
-        """移除指定命名空间的索引。"""
         self._indices.pop((user_id, namespace), None)
+
+    @staticmethod
+    def _coerce_chunk_id(value: object, *, fallback: int) -> int:
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+        return fallback

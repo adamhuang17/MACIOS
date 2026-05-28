@@ -69,6 +69,7 @@ class FeishuInboundMessage(BaseModel):
     message_type: FeishuMessageType = FeishuMessageType.UNKNOWN
     sender_id: str
     sender_id_type: str = "open_id"
+    sender_type: str = ""
     text: str = ""
     mentions: list[str] = Field(default_factory=list)
     bot_mentioned: bool = False

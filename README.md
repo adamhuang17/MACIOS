@@ -472,6 +472,52 @@ python scripts/benchmark.py
 python scripts/evaluate.py
 ```
 
+## 企业知识库 RAG
+
+RAG 使用 PostgreSQL/pgvector 作为权威知识库存储，Redis 作为查询结果与 BM25 稀疏索引热缓存。Docker Compose 已包含 `postgres` 与 `redis` 服务：
+
+```bash
+docker compose up -d postgres redis
+```
+
+关键配置：
+
+```env
+PG_DSN=postgresql://agent:agent@localhost:5432/agent_hub
+REDIS_URL=redis://localhost:6379/0
+
+EMBEDDING_PROVIDER=local
+EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
+EMBEDDING_DIMENSION=1024
+EMBEDDING_DEVICE=cpu
+
+RAG_REDIS_ENABLED=true
+RAG_QUERY_CACHE_ENABLED=true
+RAG_SPARSE_CACHE_ENABLED=true
+```
+
+兼容 OpenAI embeddings API 的远程 embedding 服务可切换为：
+
+```env
+EMBEDDING_PROVIDER=openai_compatible
+EMBEDDING_MODEL=text-embedding-3-large
+EMBEDDING_DIMENSION=3072
+EMBEDDING_BASE_URL=https://api.openai.com/v1
+EMBEDDING_API_KEY=your_embedding_key
+```
+
+知识库接口：
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/rag/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"u1","namespace":"handbook","document_id":"leave-policy","doc_type":"markdown","content":"# 年假政策\n员工每年可享受..."}'
+
+curl -X POST http://127.0.0.1:8080/api/rag/retrieve \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"u1","namespace":"handbook","query":"年假怎么申请？","top_k":5}'
+```
+
 如果你在准备演示，建议同时阅读：
 
 - `demo_runbook.md`：比赛/答辩的黄金路径与兜底方案
