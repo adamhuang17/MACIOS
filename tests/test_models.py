@@ -12,6 +12,8 @@ from agent_hub.core import (
     ExecutionMode,
     MemoryEntry,
     RoutingDecision,
+    SourceChatType,
+    SourceContext,
     SubTask,
     TaskInput,
     TaskOutput,
@@ -45,23 +47,30 @@ class TestEnums:
 
 class TestUserContext:
     def test_minimal(self) -> None:
-        ctx = UserContext(user_id="u001", role=UserRole.ADMIN, channel="dingtalk")
+        ctx = UserContext(user_id="u001", role=UserRole.ADMIN)
         assert ctx.user_id == "u001"
         assert ctx.role == UserRole.ADMIN
-        assert ctx.channel == "dingtalk"
-        assert ctx.group_id is None
-        assert ctx.is_private is False
 
-    def test_full(self) -> None:
-        ctx = UserContext(
-            user_id="u002",
-            role=UserRole.USER,
+    def test_rejects_source_fields(self) -> None:
+        with pytest.raises(ValueError):
+            UserContext(user_id="u002", role=UserRole.USER, channel="qq")
+
+
+class TestSourceContext:
+    def test_source_facts(self) -> None:
+        source = SourceContext(
             channel="qq",
-            group_id="g100",
-            is_private=True,
+            chat_id="g100",
+            chat_type=SourceChatType.GROUP,
+            sender_id="u002",
         )
-        assert ctx.group_id == "g100"
-        assert ctx.is_private is True
+        assert source.channel == "qq"
+        assert source.chat_id == "g100"
+        assert source.chat_type is SourceChatType.GROUP
+
+    def test_rejects_unknown_source_fields(self) -> None:
+        with pytest.raises(ValueError):
+            SourceContext(channel="qq", session_id="legacy-session")
 
 
 # ── TaskInput 测试 ────────────────────────────────────
@@ -71,8 +80,9 @@ class TestTaskInput:
     def test_auto_trace_id(self) -> None:
         task = TaskInput(
             user_context=UserContext(
-                user_id="u001", role=UserRole.USER, channel="dingtalk"
+                user_id="u001", role=UserRole.USER,
             ),
+            source_context=SourceContext(channel="dingtalk", sender_id="u001"),
             raw_message="你好",
         )
         assert len(task.trace_id) == 36  # UUID 格式
@@ -83,18 +93,29 @@ class TestTaskInput:
     def test_with_parent_trace(self) -> None:
         task = TaskInput(
             user_context=UserContext(
-                user_id="u001", role=UserRole.USER, channel="qq"
+                user_id="u001", role=UserRole.USER,
             ),
+            source_context=SourceContext(channel="qq", sender_id="u001"),
             raw_message="子任务",
             parent_trace_id="parent-trace-123",
         )
         assert task.parent_trace_id == "parent-trace-123"
 
+    def test_requires_source_context(self) -> None:
+        with pytest.raises(ValueError):
+            TaskInput(
+                user_context=UserContext(
+                    user_id="u001", role=UserRole.USER,
+                ),
+                raw_message="缺少来源",
+            )
+
     def test_serialization_roundtrip(self) -> None:
         task = TaskInput(
             user_context=UserContext(
-                user_id="u001", role=UserRole.USER, channel="dingtalk"
+                user_id="u001", role=UserRole.USER,
             ),
+            source_context=SourceContext(channel="dingtalk", sender_id="u001"),
             raw_message="测试序列化",
         )
         data = task.model_dump()
@@ -127,7 +148,7 @@ class TestRoutingDecision:
         assert rd.low_confidence is False
         assert rd.plan == []
         assert rd.requires_admin is False
-        assert rd.allow_in_group is True
+        assert rd.tool_profile == "read_only"
 
     def test_low_confidence_flag(self) -> None:
         rd = RoutingDecision(

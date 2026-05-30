@@ -6,7 +6,7 @@
 
 核心流程::
 
-    raw_message + UserContext
+    raw_message + UserContext + SourceContext
         → LLM Structured Output（function calling）
         → 置信度规则（低置信度降级为 ignore）
         → RoutingDecision
@@ -14,15 +14,16 @@
 Example::
 
     from agent_hub.core.router import DecisionRouter
-    from agent_hub.core.models import UserContext
+    from agent_hub.core.models import SourceContext, UserContext
     from agent_hub.core.enums import UserRole
 
     router = DecisionRouter()
     decision = await router.route(
         raw_message="帮我写一个快速排序",
         user_context=UserContext(
-            user_id="u001", role=UserRole.USER, channel="dingtalk",
+            user_id="u001", role=UserRole.USER,
         ),
+        source_context=SourceContext(channel="dingtalk", sender_id="u001"),
     )
     print(decision.mode, decision.confidence, decision.plan)
 """
@@ -39,7 +40,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 from agent_hub.config.settings import Settings, get_settings
 from agent_hub.core.enums import ExecutionMode
-from agent_hub.core.models import RoutingDecision, SubTask, UserContext
+from agent_hub.core.models import RoutingDecision, SourceContext, SubTask, UserContext
 
 logger = structlog.get_logger(__name__)
 
@@ -67,10 +68,9 @@ _SYSTEM_PROMPT = """\
 - file_ingest：需要处理上传的文件
 - openclaw：需要调用 OpenClaw 外部系统
 - memory_write：需要写入长期记忆
-## 约束字段
-- requires_admin：true/false，是否必须管理员才能执行（delegate 模式通常为 true）
-- private_only：true/false，是否只能在私聊中触发
-- allow_in_group：true/false，群聊中是否允许触发
+## 安全边界
+- 你只负责判断“建议怎么处理”：mode、capabilities、targets、plan、confidence、reasoning。
+- 不要输出或推断管理员权限、审批要求或工具权限 profile；这些由系统策略层确定。
 ## 子任务拆解规则
 当 mode 为 qa/plan/act/delegate/repair 时，将请求拆解为 1-4 个子任务。每个子任务包含：
 - description: 子任务自然语言描述
@@ -79,11 +79,12 @@ _SYSTEM_PROMPT = """\
 - priority: 优先级（1最高）
 - depends_on: 依赖的子任务ID列表（用于DAG编排）
 **重要**：mode=ignore 时 plan 为空列表；其他 mode 必须至少生成一个子任务。
-## 用户上下文
+## 请求上下文
 - 用户角色: {role}
-- 消息渠道: {channel}
-- 是否私聊: {is_private}
-- 群聊ID: {group_id}
+- 来源渠道: {channel}
+- 会话类型: {chat_type}
+- 会话ID: {chat_id}
+- 消息ID: {message_id}
 请根据以上信息输出路由决策，给出置信度（0.0-1.0）并说明推理过程。"""
 
 # ── LLM 输出的内部 Schema（仅用于 function calling） ──────────
@@ -110,18 +111,6 @@ class _LLMRoutingOutput(BaseModel):
     targets: list[str] = Field(
         default_factory=list,
         description="目标 flow 或 agent 名称列表（可为空）",
-    )
-    requires_admin: bool = Field(
-        default=False,
-        description="是否必须管理员才能执行，delegate 模式通常为 true",
-    )
-    private_only: bool = Field(
-        default=False,
-        description="是否只能在私聊中触发",
-    )
-    allow_in_group: bool = Field(
-        default=True,
-        description="群聊中是否允许触发",
     )
     capabilities: list[str] = Field(
         default_factory=list,
@@ -195,7 +184,11 @@ class DecisionRouter:
     Example::
 
         router = DecisionRouter()
-        decision = await router.route("帮我写一个快速排序", user_context)
+        decision = await router.route(
+            "帮我写一个快速排序",
+            user_context,
+            source_context=SourceContext(channel="api", sender_id=user_context.user_id),
+        )
     """
 
     def __init__(
@@ -218,6 +211,7 @@ class DecisionRouter:
         self,
         raw_message: str,
         user_context: UserContext,
+        source_context: SourceContext,
     ) -> RoutingDecision:
         """对用户请求进行路由决策和子任务拆解。
 
@@ -230,13 +224,13 @@ class DecisionRouter:
         """
         log = logger.bind(
             user_id=user_context.user_id,
-            channel=user_context.channel,
+            channel=source_context.channel,
             message_preview=raw_message[:50],
         )
         log.info("decision_router.route.start")
 
         # 1. 构造 prompt
-        system_prompt = self._build_system_prompt(user_context)
+        system_prompt = self._build_system_prompt(user_context, source_context)
         messages = [{"role": "user", "content": raw_message}]
 
         # 2. 调用 LLM（含重试，失败时降级）
@@ -246,7 +240,10 @@ class DecisionRouter:
             log.warning("decision_router.llm_failed", exc_info=True)
             return self._fallback_result("LLM调用失败，降级为忽略处理")
 
-        # 3. 置信度规则
+        # 3. 清理策略字段；Router 只给执行建议，权限由 RiskPolicy 确定。
+        result = self._strip_policy_fields(result)
+
+        # 4. 置信度规则
         result = self._apply_confidence_rules(result)
 
         log.info(
@@ -260,13 +257,18 @@ class DecisionRouter:
 
     # ── Prompt 构造 ──────────────────────────────────
 
-    def _build_system_prompt(self, user_context: UserContext) -> str:
+    def _build_system_prompt(
+        self,
+        user_context: UserContext,
+        source_context: SourceContext,
+    ) -> str:
         """将用户上下文填充到 System Prompt 模板中。"""
         return _SYSTEM_PROMPT.format(
             role=user_context.role.value,
-            channel=user_context.channel,
-            is_private=user_context.is_private,
-            group_id=user_context.group_id or "无",
+            channel=source_context.channel,
+            chat_type=source_context.chat_type.value,
+            chat_id=source_context.chat_id or "无",
+            message_id=source_context.message_id or "无",
         )
 
     # ── LLM 调用 ────────────────────────────────────
@@ -297,7 +299,10 @@ class DecisionRouter:
                 *messages,  # type: ignore[arg-type]
             ],
             tools=[self._tool_schema],  # type: ignore[list-item]
-            tool_choice={"type": "function", "function": {"name": "make_routing_decision"}},  # type: ignore[arg-type]
+            tool_choice={  # type: ignore[arg-type]
+                "type": "function",
+                "function": {"name": "make_routing_decision"},
+            },
             timeout=httpx.Timeout(10.0),
         )
 
@@ -348,14 +353,24 @@ class DecisionRouter:
         return RoutingDecision(
             mode=mode,
             targets=llm_output.targets,
-            requires_admin=llm_output.requires_admin,
-            private_only=llm_output.private_only,
-            allow_in_group=llm_output.allow_in_group,
             capabilities=llm_output.capabilities,
             confidence=llm_output.confidence,
             reasoning=llm_output.reasoning,
             plan=plan,
         )
+
+    @staticmethod
+    def _strip_policy_fields(result: RoutingDecision) -> RoutingDecision:
+        """Remove any policy facts from Router output before Pipeline policy runs."""
+        return result.model_copy(update={
+            "requires_admin": False,
+            "route_source": "main",
+            "agent_id": None,
+            "session_key": None,
+            "tool_profile": "read_only",
+            "risk_level": "read",
+            "requires_approval": False,
+        })
 
     # ── 置信度规则 ───────────────────────────────────
 
@@ -407,8 +422,3 @@ class DecisionRouter:
             low_confidence=True,
         )
 
-
-# ── 向后兼容别名 ─────────────────────────────────────
-
-#: 过渡期别名，后续迭代移除。
-IntentRouter = DecisionRouter

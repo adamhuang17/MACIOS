@@ -11,6 +11,8 @@ from agent_hub.core.enums import ExecutionMode, UserRole
 from agent_hub.core.models import (
     AgentResult,
     RoutingDecision,
+    SourceChatType,
+    SourceContext,
     SubTask,
     TaskInput,
     UserContext,
@@ -45,12 +47,16 @@ def _make_task(
     ctx = UserContext(
         user_id="test-u1",
         role=role,
-        channel="test",
-        session_id="test-sess",
     )
     return TaskInput(
         trace_id=trace_id or "test-trace-001",
         user_context=ctx,
+        source_context=SourceContext(
+            channel="test",
+            chat_id="test-sess",
+            chat_type=SourceChatType.DIRECT,
+            sender_id="test-u1",
+        ),
         raw_message=message,
     )
 

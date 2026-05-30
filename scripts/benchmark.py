@@ -21,7 +21,7 @@ if str(_SRC) not in sys.path:
 
 from agent_hub.config.settings import get_settings
 from agent_hub.core.enums import UserRole
-from agent_hub.core.models import TaskInput, UserContext
+from agent_hub.core.models import SourceChatType, SourceContext, TaskInput, UserContext
 from agent_hub.core.pipeline import AgentPipeline
 
 
@@ -44,11 +44,15 @@ async def benchmark() -> None:
         ctx = UserContext(
             user_id="bench-user",
             role=UserRole(role),
-            channel="benchmark",
-            session_id="bench-session",
         )
         task_input = TaskInput(
             user_context=ctx,
+            source_context=SourceContext(
+                channel="benchmark",
+                chat_id="bench-session",
+                chat_type=SourceChatType.DIRECT,
+                sender_id="bench-user",
+            ),
             raw_message=message,
             attachments=[],
         )

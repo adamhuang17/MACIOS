@@ -14,6 +14,7 @@ import structlog
 from agent_hub.agents.registry import ToolRegistry
 from agent_hub.core.base_agent import BaseAgent
 from agent_hub.core.models import AgentResult, SubTask
+from agent_hub.core.risk import RiskPolicy, ToolProfile
 
 logger = structlog.get_logger(__name__)
 
@@ -29,10 +30,15 @@ class ToolAgent(BaseAgent):
         super().__init__(name="tool_agent", description="执行预注册的工具")
         self._registry = registry
         self._user_role: str = "user"
+        self._tool_profile: ToolProfile | str | None = None
 
     def set_user_role(self, role: str) -> None:
         """设置当前用户角色（Pipeline 在调用前设置）。"""
         self._user_role = role
+
+    def set_tool_profile(self, profile: ToolProfile | str) -> None:
+        """设置当前工具权限 profile（Pipeline 在调用前设置）。"""
+        self._tool_profile = profile
 
     async def run(
         self, subtask: SubTask, session_id: str, user_id: str,
@@ -75,11 +81,12 @@ class ToolAgent(BaseAgent):
                 tool=tool_name,
                 user_id=user_id,
                 role=self._user_role,
+                profile=str(self._tool_profile),
             )
             return AgentResult(
                 agent_name=self.name,
                 success=False,
-                error=f"权限不足：工具 '{tool_name}' 需要管理员权限",
+                error=f"权限不足：当前 profile 无权调用工具 '{tool_name}'",
                 duration_ms=0,
                 trace_id=subtask.subtask_id,
             )
@@ -168,4 +175,8 @@ class ToolAgent(BaseAgent):
         tool = self._registry.get(tool_name)
         if not tool:
             return False
-        return not (tool.spec.requires_admin and user_role != "admin")
+        if tool.spec.requires_admin and user_role != "admin":
+            return False
+        if self._tool_profile is None:
+            return True
+        return RiskPolicy.tool_allowed(tool.spec, self._tool_profile)

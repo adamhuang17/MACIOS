@@ -2,7 +2,7 @@
 
 mock 掉 LLM 调用（_call_llm），单独测试路由逻辑：
 - 6 种执行模式分类
-- requires_admin 约束字段
+- Router 清理策略字段
 - 低置信度降级
 - LLM 异常降级兜底
 - 子任务计划（plan）完整性
@@ -15,10 +15,23 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from agent_hub.core.enums import ExecutionMode, UserRole
-from agent_hub.core.models import RoutingDecision, SubTask, UserContext
+from agent_hub.core.models import (
+    RoutingDecision,
+    SourceChatType,
+    SourceContext,
+    SubTask,
+    UserContext,
+)
 from agent_hub.core.router import DecisionRouter
 
 # ── Fixtures ─────────────────────────────────────────
+
+_TEST_SOURCE = SourceContext(
+    channel="test",
+    chat_id="test-chat",
+    chat_type=SourceChatType.GROUP,
+    sender_id="test-user",
+)
 
 
 @pytest.fixture()
@@ -29,7 +42,7 @@ def router() -> DecisionRouter:
 
 @pytest.fixture()
 def admin_ctx() -> UserContext:
-    return UserContext(user_id="admin001", role=UserRole.ADMIN, channel="dingtalk")
+    return UserContext(user_id="admin001", role=UserRole.ADMIN)
 
 
 @pytest.fixture()
@@ -37,8 +50,6 @@ def user_ctx() -> UserContext:
     return UserContext(
         user_id="user001",
         role=UserRole.USER,
-        channel="qq",
-        group_id="g100",
     )
 
 
@@ -142,7 +153,7 @@ class TestRouteClassification:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route(query, admin_ctx)
+            result = await router.route(query, admin_ctx, _TEST_SOURCE)
 
         assert result.mode == expected_mode
         assert 0.0 <= result.confidence <= 1.0
@@ -152,46 +163,47 @@ class TestRouteClassification:
             assert len(result.plan) >= 2
 
 
-# ── 测试 requires_admin 约束字段 ─────────────────────
+# ── 测试策略字段清理 ─────────────────────────────────
 
 
-class TestRequiresAdmin:
-    """测试 requires_admin 字段的路由行为（权限校验已移至 Pipeline）。"""
+class TestPolicyFieldScrubbing:
+    """Router 不携带最终权限事实，权限由 Pipeline/RiskPolicy 计算。"""
 
-    async def test_admin_decision_carries_requires_admin(
+    async def test_router_strips_legacy_policy_flags(
         self,
         router: DecisionRouter,
         admin_ctx: UserContext,
     ) -> None:
-        """delegate 模式 + requires_admin=True → 原样返回，由 Pipeline 做权限校验。"""
+        """即使内部 mock 带了旧权限字段，Router 也会清理掉。"""
         mock_result = _make_routing_decision(
             ExecutionMode.DELEGATE, requires_admin=True,
         )
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("重启测试服务器", admin_ctx)
+            result = await router.route("重启测试服务器", admin_ctx, _TEST_SOURCE)
 
         assert result.mode == ExecutionMode.DELEGATE
-        assert result.requires_admin is True
+        assert result.requires_admin is False
+        assert result.requires_approval is False
+        assert result.tool_profile == "read_only"
 
     async def test_user_delegate_decision_not_downgraded_by_router(
         self,
         router: DecisionRouter,
         user_ctx: UserContext,
     ) -> None:
-        """普通用户发出 delegate 请求 → Router 不降级，由 Pipeline 处理权限。"""
+        """普通用户发出 delegate 请求 → Router 保留执行模式，权限事实留给策略层。"""
         mock_result = _make_routing_decision(
             ExecutionMode.DELEGATE, requires_admin=True,
         )
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("重启测试服务器", user_ctx)
+            result = await router.route("重启测试服务器", user_ctx, _TEST_SOURCE)
 
-        # Router 不再做权限降级，原样返回，Pipeline 负责
         assert result.mode == ExecutionMode.DELEGATE
-        assert result.requires_admin is True
+        assert result.requires_admin is False
 
     async def test_non_admin_mode_unaffected(
         self,
@@ -203,7 +215,7 @@ class TestRequiresAdmin:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("公司年假政策是什么", user_ctx)
+            result = await router.route("公司年假政策是什么", user_ctx, _TEST_SOURCE)
 
         assert result.mode == ExecutionMode.QA
         assert result.requires_admin is False
@@ -225,7 +237,7 @@ class TestConfidenceRules:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("帮我写代码", user_ctx)
+            result = await router.route("帮我写代码", user_ctx, _TEST_SOURCE)
 
         assert result.mode == ExecutionMode.PLAN
         assert result.low_confidence is False
@@ -241,7 +253,7 @@ class TestConfidenceRules:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("这个好像是查询", user_ctx)
+            result = await router.route("这个好像是查询", user_ctx, _TEST_SOURCE)
 
         assert result.mode == ExecutionMode.QA
         assert result.low_confidence is True
@@ -259,7 +271,7 @@ class TestConfidenceRules:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("嗯？", user_ctx)
+            result = await router.route("嗯？", user_ctx, _TEST_SOURCE)
 
         assert result.mode == ExecutionMode.IGNORE
         assert result.low_confidence is True
@@ -276,7 +288,7 @@ class TestConfidenceRules:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("查一下文档", user_ctx)
+            result = await router.route("查一下文档", user_ctx, _TEST_SOURCE)
 
         assert result.low_confidence is False
         assert len(result.plan) == 2
@@ -291,7 +303,7 @@ class TestConfidenceRules:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("可能是查询吧", user_ctx)
+            result = await router.route("可能是查询吧", user_ctx, _TEST_SOURCE)
 
         assert result.mode == ExecutionMode.QA
         assert result.low_confidence is True
@@ -315,7 +327,7 @@ class TestFallback:
             new_callable=AsyncMock,
             side_effect=Exception("API timeout"),
         ):
-            result = await router.route("任意消息", user_ctx)
+            result = await router.route("任意消息", user_ctx, _TEST_SOURCE)
 
         assert result.mode == ExecutionMode.IGNORE
         assert result.confidence == pytest.approx(0.3)
@@ -336,7 +348,7 @@ class TestFallback:
             new_callable=AsyncMock,
             side_effect=httpx.TimeoutException("Connection timed out"),
         ):
-            result = await router.route("超时消息", user_ctx)
+            result = await router.route("超时消息", user_ctx, _TEST_SOURCE)
 
         assert result.mode == ExecutionMode.IGNORE
         assert result.low_confidence is True
@@ -358,7 +370,11 @@ class TestPlanDecomposition:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("帮我写一份项目周报然后发到钉钉群", admin_ctx)
+            result = await router.route(
+                "帮我写一份项目周报然后发到钉钉群",
+                admin_ctx,
+                _TEST_SOURCE,
+            )
 
         assert len(result.plan) == 2
         assert result.plan[0].subtask_id == "subtask_1"
@@ -374,7 +390,7 @@ class TestPlanDecomposition:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("搜索论文然后总结", admin_ctx)
+            result = await router.route("搜索论文然后总结", admin_ctx, _TEST_SOURCE)
 
         # subtask_2 依赖 subtask_1
         assert result.plan[1].depends_on == ["subtask_1"]
@@ -391,7 +407,7 @@ class TestPlanDecomposition:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("写报告", admin_ctx)
+            result = await router.route("写报告", admin_ctx, _TEST_SOURCE)
 
         for st in result.plan:
             assert len(st.required_agents) > 0
@@ -407,7 +423,7 @@ class TestPlanDecomposition:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("不确定的请求", user_ctx)
+            result = await router.route("不确定的请求", user_ctx, _TEST_SOURCE)
 
         assert result.plan == []
         assert result.low_confidence is True
@@ -422,7 +438,7 @@ class TestPlanDecomposition:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("哈哈", admin_ctx)
+            result = await router.route("哈哈", admin_ctx, _TEST_SOURCE)
 
         assert result.plan == []
 
@@ -445,7 +461,7 @@ class TestCapabilities:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("帮我算 2+3", user_ctx)
+            result = await router.route("帮我算 2+3", user_ctx, _TEST_SOURCE)
 
         assert "tool" in result.capabilities
 
@@ -461,7 +477,7 @@ class TestCapabilities:
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
-            result = await router.route("RAG 是什么", user_ctx)
+            result = await router.route("RAG 是什么", user_ctx, _TEST_SOURCE)
 
         assert "retrieval" in result.capabilities
 

@@ -15,6 +15,8 @@ from agent_hub.core.enums import ExecutionMode
 from agent_hub.core.models import (
     AgentResult,
     RoutingDecision,
+    SourceChatType,
+    SourceContext,
     SubTask,
     TaskInput,
     UserContext,
@@ -147,9 +149,12 @@ class TestPipelineFallback:
             user_context=UserContext(
                 user_id="ou_test",
                 role="user",
+            ),
+            source_context=SourceContext(
                 channel="feishu",
-                session_id="oc_chat",
-                is_private=True,
+                chat_id="oc_chat",
+                chat_type=SourceChatType.DIRECT,
+                sender_id="ou_test",
             ),
             raw_message="你好，这是一条测试内容，你需要回复我“我很好”",
         )

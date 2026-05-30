@@ -33,6 +33,7 @@ def client():
     with patch("agent_hub.api.routes.AgentPipeline") as MockPipeline:
         mock_instance = MockPipeline.return_value
         mock_instance.run = AsyncMock(return_value=_mock_pipeline_run_output())
+        mock_instance.rag_pipeline.close = AsyncMock(return_value=None)
         mock_instance._registry.list_tools_for_user.return_value = []
 
         from agent_hub.api.routes import app
@@ -59,7 +60,11 @@ class TestChatEndpoint:
             "message": "你好",
             "user_id": "test-user",
             "role": "user",
-            "channel": "test",
+            "source_context": {
+                "channel": "test",
+                "chat_id": "test-chat",
+                "chat_type": "direct",
+            },
         })
         assert resp.status_code == 200
         data = resp.json()
@@ -77,6 +82,11 @@ class TestChatEndpoint:
             "message": "hello",
             "user_id": "u1",
             "trace_id": "custom-trace",
+            "source_context": {
+                "channel": "api",
+                "chat_id": "u1",
+                "chat_type": "direct",
+            },
         })
         assert resp.status_code == 200
 

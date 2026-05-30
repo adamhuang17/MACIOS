@@ -17,7 +17,7 @@ from pathlib import Path
 import structlog
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
 
 from agent_hub.api.feishu_routes import build_feishu_router
@@ -26,7 +26,7 @@ from agent_hub.api.pilot_runtime import PilotRuntime, build_pilot_runtime
 from agent_hub.api.rag_routes import build_rag_router
 from agent_hub.config.settings import Settings, get_settings
 from agent_hub.core.enums import UserRole
-from agent_hub.core.models import TaskInput, UserContext
+from agent_hub.core.models import SourceContext, TaskInput, UserContext
 from agent_hub.core.pipeline import AgentPipeline
 from agent_hub.core.trace_store import InMemoryTraceStore, get_trace_store, set_trace_store
 from agent_hub.core.tracer import init_tracer
@@ -178,13 +178,12 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     """对话请求体。"""
+    model_config = ConfigDict(extra="forbid")
 
     message: str = Field(..., description="用户消息")
     user_id: str = Field(..., description="用户ID")
     role: str = Field(default="user", description="角色：admin / user")
-    channel: str = Field(default="api", description="渠道")
-    session_id: str | None = Field(default=None, description="会话ID")
-    group_id: str | None = Field(default=None, description="群ID")
+    source_context: SourceContext = Field(..., description="消息来源上下文")
     trace_id: str | None = Field(default=None, description="链路追踪ID")
 
 
@@ -208,15 +207,15 @@ async def chat(req: ChatRequest) -> ChatResponse:
     user_ctx = UserContext(
         user_id=req.user_id,
         role=UserRole(req.role),
-        channel=req.channel,
-        session_id=req.session_id or req.user_id,
-        group_id=req.group_id,
-        is_private=req.group_id is None,
+    )
+    source_context = req.source_context.model_copy(
+        update={"sender_id": req.source_context.sender_id or req.user_id}
     )
 
     task_input = TaskInput(
         trace_id=req.trace_id or str(uuid.uuid4()),
         user_context=user_ctx,
+        source_context=source_context,
         raw_message=req.message,
         attachments=[],
     )
@@ -284,15 +283,15 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
     user_ctx = UserContext(
         user_id=req.user_id,
         role=UserRole(req.role),
-        channel=req.channel,
-        session_id=req.session_id or req.user_id,
-        group_id=req.group_id,
-        is_private=req.group_id is None,
+    )
+    source_context = req.source_context.model_copy(
+        update={"sender_id": req.source_context.sender_id or req.user_id}
     )
 
     task_input = TaskInput(
         trace_id=req.trace_id or str(uuid.uuid4()),
         user_context=user_ctx,
+        source_context=source_context,
         raw_message=req.message,
         attachments=[],
     )

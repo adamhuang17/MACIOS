@@ -17,6 +17,7 @@ from openai import OpenAI
 
 from agent_hub.core.base_agent import BaseAgent
 from agent_hub.core.models import AgentResult, ReActStep, ReActTrace, SubTask
+from agent_hub.core.risk import RiskPolicy, ToolProfile
 
 if TYPE_CHECKING:
     from agent_hub.agents.registry import ToolRegistry
@@ -100,6 +101,7 @@ class LLMAgent(BaseAgent):
         self._memory_manager: MemoryManager | None = None
         self._registry: ToolRegistry | None = None
         self._user_role: str = "user"
+        self._tool_profile: ToolProfile | str | None = None
 
     def inject_memory(self, memory_manager: MemoryManager) -> None:
         """注入记忆管理器（Pipeline 在初始化时调用）。"""
@@ -116,6 +118,10 @@ class LLMAgent(BaseAgent):
         与 :class:`ToolAgent.set_user_role` 保持语义一致。
         """
         self._user_role = role
+
+    def set_tool_profile(self, profile: ToolProfile | str) -> None:
+        """设置当前工具权限 profile（Pipeline 在调用前设置）。"""
+        self._tool_profile = profile
 
     # ── 主入口 ───────────────────────────────────────
 
@@ -445,7 +451,12 @@ class LLMAgent(BaseAgent):
 
         tool = self._registry.get(tool_name)
         if not tool:
-            available = [t.name for t in self._registry.list_tools()]
+            available_tools = (
+                self._registry.list_tools()
+                if self._tool_profile is None
+                else self._registry.list_tools_for_profile(self._tool_profile)
+            )
+            available = [t.name for t in available_tools]
             return f"错误：工具 '{tool_name}' 不存在。可用工具: {available}"
 
         # admin 权限检查（与 ToolAgent._check_permission 语义一致）
@@ -459,6 +470,15 @@ class LLMAgent(BaseAgent):
                 f"错误：工具 '{tool_name}' 需要管理员权限，"
                 f"当前角色 '{self._user_role}' 无权调用。"
             )
+        if self._tool_profile is not None and not RiskPolicy.tool_allowed(
+            tool.spec, self._tool_profile,
+        ):
+            logger.warning(
+                "react_tool_profile_denied",
+                tool=tool_name,
+                profile=str(self._tool_profile),
+            )
+            return f"错误：当前工具 profile '{self._tool_profile}' 无权调用 '{tool_name}'。"
 
         # 构造参数：简单值 → {"value": ...}，key=value → 解析
         params = self._parse_action_input(action_input, tool_name)
@@ -512,7 +532,11 @@ class LLMAgent(BaseAgent):
         """构建 ReAct 系统 Prompt，包含可用工具列表。"""
         assert self._registry is not None  # noqa: S101
 
-        tools = self._registry.list_tools()
+        tools = (
+            self._registry.list_tools()
+            if self._tool_profile is None
+            else self._registry.list_tools_for_profile(self._tool_profile)
+        )
         tool_lines = []
         for t in tools:
             params_desc = ", ".join(

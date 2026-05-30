@@ -27,6 +27,8 @@ from agent_hub.agents.tool_agent import ToolAgent
 from agent_hub.config.settings import get_settings
 from agent_hub.core.enums import UserRole
 from agent_hub.core.models import (
+    SourceChatType,
+    SourceContext,
     SubTask,
     UserContext,
 )
@@ -40,7 +42,11 @@ def separator(title: str) -> None:
     print(f"{'=' * 60}")
 
 
-async def demo_router(router: DecisionRouter, user_ctx: UserContext) -> None:
+async def demo_router(
+    router: DecisionRouter,
+    user_ctx: UserContext,
+    source_ctx: SourceContext,
+) -> None:
     """演示 1：路由决策 - 看 LLM 如何分配模式 + 拆子任务。"""
     separator("[1/6] 路由决策 DecisionRouter")
     print("展示: 你发一句话 -> LLM 判断意图类型 + 拆解子任务\n")
@@ -55,7 +61,7 @@ async def demo_router(router: DecisionRouter, user_ctx: UserContext) -> None:
 
     for msg in messages:
         print(f"  输入: {msg}")
-        result = await router.route(msg, user_ctx)
+        result = await router.route(msg, user_ctx, source_ctx)
         print(f"    -> 模式: {result.mode.value}")
         print(f"    -> 置信度: {result.confidence:.2f}")
         print(f"    -> 子任务数: {len(result.plan)}")
@@ -196,8 +202,12 @@ async def main() -> None:
     user_ctx = UserContext(
         user_id="demo-user",
         role=UserRole.USER,
+    )
+    source_ctx = SourceContext(
         channel="cli",
-        session_id="demo-sess",
+        chat_id="demo-sess",
+        chat_type=SourceChatType.DIRECT,
+        sender_id="demo-user",
     )
 
     router = DecisionRouter(settings=settings)
@@ -217,7 +227,7 @@ async def main() -> None:
     tool_agent = ToolAgent(registry)
     tool_agent.set_user_role(UserRole.USER)
 
-    await demo_router(router, user_ctx)
+    await demo_router(router, user_ctx, source_ctx)
     await demo_llm_agent(llm)
     await demo_tool_agent(tool_agent)
     await demo_react(llm)

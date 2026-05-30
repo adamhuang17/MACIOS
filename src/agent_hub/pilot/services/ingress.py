@@ -230,25 +230,43 @@ class PilotIngressService:
             return "（普通问答能力暂未启用，请稍后再试。）"
         # 延迟 import 避免与 pilot 模块互相加载。
         from agent_hub.core.enums import UserRole
-        from agent_hub.core.models import TaskInput, UserContext
+        from agent_hub.core.models import (
+            SourceChatType,
+            SourceContext,
+            TaskInput,
+            UserContext,
+        )
 
         user_ctx = UserContext(
             user_id=message.sender_id or "feishu-user",
             role=UserRole.USER,
-            channel="feishu",
-            session_id=message.chat_id,
-            group_id=(
-                message.chat_id
-                if message.chat_type is FeishuChatType.GROUP
-                else None
-            ),
-            is_private=message.chat_type is FeishuChatType.P2P,
         )
         task_input = TaskInput(
             user_context=user_ctx,
+            source_context=SourceContext(
+                channel="feishu",
+                account_id=message.app_id,
+                chat_id=message.chat_id,
+                chat_type=(
+                    SourceChatType.DIRECT
+                    if message.chat_type is FeishuChatType.P2P
+                    else SourceChatType.GROUP
+                    if message.chat_type is FeishuChatType.GROUP
+                    else SourceChatType.UNKNOWN
+                ),
+                message_id=message.message_id,
+                sender_id=message.sender_id,
+                sender_id_type=message.sender_id_type,
+                is_at_bot=message.bot_mentioned,
+                raw={
+                    "tenant_key": message.tenant_key,
+                    "event_id": message.event_id,
+                    "message_type": message.message_type.value,
+                    "chat_type": message.chat_type.value,
+                },
+            ),
             raw_message=message.text or "",
             attachments=[],
-            is_at_bot=message.bot_mentioned,
         )
         try:
             output = await self._pipeline.run(task_input)

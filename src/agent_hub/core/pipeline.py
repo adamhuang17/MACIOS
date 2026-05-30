@@ -9,12 +9,18 @@ Example::
 
     from agent_hub.config.settings import get_settings
     from agent_hub.core.pipeline import AgentPipeline
-    from agent_hub.core.models import TaskInput, UserContext
+    from agent_hub.core.models import SourceChatType, SourceContext, TaskInput, UserContext
     from agent_hub.core.enums import UserRole
 
     pipeline = AgentPipeline(get_settings())
     output = await pipeline.run(TaskInput(
-        user_context=UserContext(user_id="u1", role=UserRole.USER, channel="api"),
+        user_context=UserContext(user_id="u1", role=UserRole.USER),
+        source_context=SourceContext(
+            channel="api",
+            chat_id="u1",
+            chat_type=SourceChatType.DIRECT,
+            sender_id="u1",
+        ),
         raw_message="帮我写一个二分查找",
     ))
 """
@@ -25,6 +31,7 @@ import asyncio
 import time
 from collections import defaultdict
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import structlog
@@ -36,16 +43,23 @@ from agent_hub.agents import (
     ToolAgent,
     ToolRegistry,
 )
+from agent_hub.core.binding import BindingResult, SourceBindingResolver
 from agent_hub.core.enums import ExecutionMode, UserRole
 from agent_hub.core.models import (
     AgentResult,
+    Artifact,
+    GuardResult,
     MemoryEntry,
     RoutingDecision,
+    SourceChatType,
+    SourceContext,
     SubTask,
     TaskInput,
     TaskOutput,
 )
+from agent_hub.core.plan_validator import SubTaskPlanValidator
 from agent_hub.core.rate_limiter import RateLimiter
+from agent_hub.core.risk import RiskDecision, RiskPolicy
 from agent_hub.core.router import DecisionRouter
 from agent_hub.core.tracer import SpanContext, get_current_trace_id
 from agent_hub.memory import MemoryManager
@@ -58,6 +72,17 @@ if TYPE_CHECKING:
     from agent_hub.core.cache import CacheLayer
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass(slots=True)
+class _PreparedExecution:
+    source_context: SourceContext
+    binding: BindingResult | None = None
+    routing: RoutingDecision | None = None
+    risk: RiskDecision | None = None
+    guard_result: GuardResult | None = None
+    blocked_response: str | None = None
+    blocked_status: str | None = None
 
 
 # ── DAG 拓扑排序工具 ─────────────────────────────────
@@ -119,6 +144,9 @@ class AgentPipeline:
 
         # 路由器
         self._router = DecisionRouter(settings=settings)
+        self._binding = SourceBindingResolver()
+        self._risk_policy = RiskPolicy()
+        self._plan_validator = SubTaskPlanValidator()
 
         # 记忆管理器
         self._memory = MemoryManager(vault_path=settings.obsidian_vault_path)
@@ -262,6 +290,107 @@ class AgentPipeline:
         except Exception as exc:  # noqa: BLE001
             logger.warning("vector_memory_inject_failed", error=str(exc))
 
+    # ── 执行准备：guard → binding → router → risk ─────────
+
+    async def _prepare_execution(
+        self,
+        task_input: TaskInput,
+        trace_id: str,
+        root_span: SpanContext | None = None,
+    ) -> _PreparedExecution:
+        """Build once, consume in both ``run`` and ``run_stream``."""
+        source_context = self._resolve_source_context(task_input)
+        user_ctx = task_input.user_context
+
+        guard_result: GuardResult | None = None
+        if self._guard is not None:
+            with SpanContext("step.guard", trace_id):
+                guard_result = await self._guard.check(task_input.raw_message)
+                if root_span is not None:
+                    root_span.add_event("guard_done", {
+                        "risk_level": guard_result.risk_level,
+                        "is_safe": guard_result.is_safe,
+                    })
+                if not guard_result.is_safe:
+                    return _PreparedExecution(
+                        source_context=source_context,
+                        guard_result=guard_result,
+                        blocked_response=self._guard_blocked_response(guard_result),
+                        blocked_status="blocked",
+                    )
+
+        with SpanContext("step.binding", trace_id):
+            binding = self._binding.resolve(source_context, user_ctx)
+            if root_span is not None:
+                root_span.add_event("binding_done", {
+                    "agent_id": binding.agent_id,
+                    "route_source": binding.route_source,
+                    "session_key": binding.session_key,
+                })
+
+        with SpanContext("step.router", trace_id):
+            routing = await self._router.route(
+                task_input.raw_message,
+                user_ctx,
+                source_context=source_context,
+            )
+            routing = self._promote_addressed_ignore(task_input, routing)
+            risk = self._risk_policy.assess(
+                user_context=user_ctx,
+                source_context=source_context,
+                binding=binding,
+                routing=routing,
+                guard_result=guard_result,
+            )
+            routing = self._risk_policy.apply(
+                routing=routing,
+                binding=binding,
+                decision=risk,
+            )
+            if root_span is not None:
+                root_span.add_event("routing_done", {
+                    "mode": routing.mode.value,
+                    "confidence": routing.confidence,
+                    "plan_count": len(routing.plan),
+                    "route_source": routing.route_source,
+                    "tool_profile": routing.tool_profile,
+                    "risk_level": routing.risk_level,
+                    "requires_approval": routing.requires_approval,
+                })
+
+        return _PreparedExecution(
+            source_context=source_context,
+            binding=binding,
+            routing=routing,
+            risk=risk,
+            guard_result=guard_result,
+        )
+
+    @staticmethod
+    def _resolve_source_context(task_input: TaskInput) -> SourceContext:
+        return task_input.source_context
+
+    @staticmethod
+    def _guard_blocked_response(guard_result: GuardResult) -> str:
+        return (
+            "⚠️ 检测到潜在安全风险，请求已被拦截。"
+            f"（规则命中: {guard_result.matched_rules}）"
+        )
+
+    @staticmethod
+    def _configure_agent_context(
+        agent: BaseAgent,
+        user_ctx: object,
+        routing: RoutingDecision,
+    ) -> None:
+        role = getattr(getattr(user_ctx, "role", None), "value", None) or getattr(
+            user_ctx, "role", "user",
+        )
+        if hasattr(agent, "set_user_role"):
+            agent.set_user_role(str(role))
+        if hasattr(agent, "set_tool_profile"):
+            agent.set_tool_profile(routing.tool_profile)
+
     # ── 流式入口 ─────────────────────────────────────
 
     async def run_stream(
@@ -280,26 +409,18 @@ class AgentPipeline:
         Yields:
             dict: ``{"type": "status"|"token"|"error"|"done", "content": "..."}``
         """
+        trace_id = task_input.trace_id or get_current_trace_id()
         user_ctx = task_input.user_context
-        session_id = user_ctx.session_id or user_ctx.user_id
+        prepared = await self._prepare_execution(task_input, trace_id)
+        if prepared.blocked_response is not None:
+            yield {"type": "error", "content": prepared.blocked_response}
+            return
+        if prepared.routing is None or prepared.binding is None:
+            yield {"type": "error", "content": "执行准备失败：缺少路由结果"}
+            return
 
-        # ── Step 0: 安全检测（与 run() 一致） ────────
-        if self._guard is not None:
-            guard_result = await self._guard.check(task_input.raw_message)
-            if not guard_result.is_safe:
-                yield {
-                    "type": "error",
-                    "content": (
-                        "⚠️ 检测到潜在安全风险，请求已被拦截。"
-                        f"（规则命中: {guard_result.matched_rules}）"
-                    ),
-                }
-                return
-
-        # ── Step 1: 路由 ─────────────────────────────
-        routing = await self._router.route(task_input.raw_message, user_ctx)
-
-        routing = self._promote_addressed_ignore(task_input, routing)
+        routing = prepared.routing
+        session_id = routing.session_key or prepared.binding.session_key
 
         if routing.mode == ExecutionMode.IGNORE or routing.low_confidence:
             yield {"type": "token", "content": self._build_fallback_response(routing)}
@@ -317,6 +438,16 @@ class AgentPipeline:
             routing = self._ensure_default_subtask(routing, task_input.raw_message)
 
         routing = self._postprocess_subtasks(routing)
+        validation = self._plan_validator.validate(
+            routing.plan,
+            tool_profile=routing.tool_profile,
+        )
+        if not validation.valid:
+            yield {
+                "type": "error",
+                "content": f"计划校验失败：{'; '.join(validation.errors)}",
+            }
+            return
 
         # ── Step 3: 流式执行 ────────────────────────
         collected_outputs: list[str] = []
@@ -328,11 +459,7 @@ class AgentPipeline:
                 yield {"type": "token", "content": f"[未知 Agent: {agent_type}]"}
                 continue
 
-            # 与 run() 保持一致：注入用户角色，使 ReAct/工具调用受权限约束
-            if agent_type in ("tool_agent", "llm_agent") and hasattr(
-                agent, "set_user_role",
-            ):
-                agent.set_user_role(user_ctx.role.value)
+            self._configure_agent_context(agent, user_ctx, routing)
 
             # 如果 agent 支持 run_stream，使用流式
             if hasattr(agent, "run_stream"):
@@ -376,7 +503,7 @@ class AgentPipeline:
 
         完整流程：
 
-        1. 路由决策（IntentRouter）
+        1. 路由决策（DecisionRouter）
         2. GROUP_CHAT / 低置信度 fallback
         3. 权限校验（ADMIN_COMMAND）
         4. Agent 执行（DAG 拓扑排序 → 同层 asyncio.gather 并行）
@@ -391,36 +518,40 @@ class AgentPipeline:
         """
         trace_id = task_input.trace_id or get_current_trace_id()
         user_ctx = task_input.user_context
-        session_id = user_ctx.session_id or user_ctx.user_id
         start_time = time.monotonic()
 
         with SpanContext("pipeline.run", trace_id) as root_span:
             try:
-                # ── Step 0: 安全检测 ─────────────────────
-                if self._guard is not None:
-                    with SpanContext("step.guard", trace_id):
-                        guard_result = await self._guard.check(
-                            task_input.raw_message,
-                        )
-                        root_span.add_event("guard_done", {
-                            "risk_level": guard_result.risk_level,
-                            "is_safe": guard_result.is_safe,
-                        })
-                        if not guard_result.is_safe:
-                            return TaskOutput(
-                                trace_id=trace_id,
-                                user_id=user_ctx.user_id,
-                                response=(
-                                    "⚠️ 检测到潜在安全风险，请求已被拦截。"
-                                    f"（规则命中: {guard_result.matched_rules}）"
-                                ),
-                                agent_results=[],
-                                memory_saved=[],
-                                total_duration_ms=self._elapsed_ms(start_time),
-                                status="blocked",
-                            )
+                prepared = await self._prepare_execution(
+                    task_input,
+                    trace_id,
+                    root_span,
+                )
+                if prepared.blocked_response is not None:
+                    return TaskOutput(
+                        trace_id=trace_id,
+                        user_id=user_ctx.user_id,
+                        response=prepared.blocked_response,
+                        agent_results=[],
+                        memory_saved=[],
+                        total_duration_ms=self._elapsed_ms(start_time),
+                        status=prepared.blocked_status or "blocked",
+                    )
+                if prepared.routing is None or prepared.binding is None:
+                    return TaskOutput(
+                        trace_id=trace_id,
+                        user_id=user_ctx.user_id,
+                        response="执行准备失败：缺少路由结果",
+                        agent_results=[],
+                        memory_saved=[],
+                        total_duration_ms=self._elapsed_ms(start_time),
+                        status="error",
+                    )
 
-                # ── Step 0.5: 三级缓存查询（启用时） ─────
+                routing = prepared.routing
+                session_id = routing.session_key or prepared.binding.session_key
+
+                # ── Step 1.5: 三级缓存查询（启用时） ─────
                 if self._cache is not None:
                     try:
                         hit = await self._cache.get(
@@ -440,19 +571,6 @@ class AgentPipeline:
                             total_duration_ms=self._elapsed_ms(start_time),
                             status="cache_hit",
                         )
-
-                # ── Step 1: 路由决策 ─────────────────────
-                with SpanContext("step.router", trace_id):
-                    routing = await self._router.route(
-                        task_input.raw_message,
-                        user_ctx,
-                    )
-                    routing = self._promote_addressed_ignore(task_input, routing)
-                    root_span.add_event("routing_done", {
-                        "mode": routing.mode.value,
-                        "confidence": routing.confidence,
-                        "plan_count": len(routing.plan),
-                    })
 
                 # ── Step 2: ignore / 低置信度降级 ────────
                 if routing.mode == ExecutionMode.IGNORE or routing.low_confidence:
@@ -486,14 +604,29 @@ class AgentPipeline:
 
                 # ── Step 3.6: 子任务后处理 — 修正 required_agents 以触发 ReAct
                 routing = self._postprocess_subtasks(routing)
+                validation = self._plan_validator.validate(
+                    routing.plan,
+                    tool_profile=routing.tool_profile,
+                )
+                if not validation.valid:
+                    return TaskOutput(
+                        trace_id=trace_id,
+                        user_id=user_ctx.user_id,
+                        response=f"计划校验失败：{'; '.join(validation.errors)}",
+                        agent_results=[],
+                        memory_saved=[],
+                        total_duration_ms=self._elapsed_ms(start_time),
+                        status="invalid_plan",
+                    )
 
                 # ── Step 4: Agent 执行（DAG 并行） ───────
                 agent_results = await self._execute_dag(
-                    routing.plan, task_input, trace_id,
+                    routing.plan, task_input, trace_id, routing,
                 )
 
                 # ── Step 5: 构建回复 ─────────────────────
                 response = self._build_response(routing, agent_results)
+                artifacts = self._collect_artifacts(agent_results)
 
                 # ── Step 5.5: 缓存回写（启用时） ─────────
                 if self._cache is not None and response:
@@ -523,6 +656,7 @@ class AgentPipeline:
                     response=response,
                     agent_results=agent_results,
                     memory_saved=memory_saved,
+                    artifacts=artifacts,
                     total_duration_ms=total_ms,
                     status="success",
                 )
@@ -547,6 +681,7 @@ class AgentPipeline:
         sub_tasks: list[SubTask],
         task_input: TaskInput,
         trace_id: str,
+        routing: RoutingDecision,
     ) -> list[AgentResult]:
         """按 DAG 拓扑排序分层执行子任务，同层 ``asyncio.gather`` 并行。"""
         layers = _topological_layers(sub_tasks)
@@ -554,7 +689,7 @@ class AgentPipeline:
 
         for layer in layers:
             coros = [
-                self._execute_subtask(st, task_input, trace_id) for st in layer
+                self._execute_subtask(st, task_input, trace_id, routing) for st in layer
             ]
             layer_results = await asyncio.gather(*coros, return_exceptions=False)
             all_results.extend(layer_results)
@@ -566,10 +701,11 @@ class AgentPipeline:
         subtask: SubTask,
         task_input: TaskInput,
         trace_id: str,
+        routing: RoutingDecision,
     ) -> AgentResult:
         """将单个子任务分发到对应 Agent。"""
         user_ctx = task_input.user_context
-        session_id = user_ctx.session_id or user_ctx.user_id
+        session_id = routing.session_key or user_ctx.user_id
 
         # 选择 Agent（优先 required_agents 第一个）
         agent_type = subtask.required_agents[0] if subtask.required_agents else "llm_agent"
@@ -585,12 +721,7 @@ class AgentPipeline:
 
         agent = self._agents[agent_type]
 
-        # ToolAgent / LLMAgent (ReAct) 都需要预设用户角色，
-        # 以便 admin 工具受到正确的权限过滤。
-        if agent_type in ("tool_agent", "llm_agent") and hasattr(
-            agent, "set_user_role",
-        ):
-            agent.set_user_role(user_ctx.role.value)
+        self._configure_agent_context(agent, user_ctx, routing)
 
         with SpanContext(f"agent.{subtask.subtask_id}", trace_id):
             try:
@@ -620,6 +751,30 @@ class AgentPipeline:
                 parts.append(f"[{r.agent_name}] 执行失败：{r.error}")
 
         return "\n\n".join(parts) if parts else "任务执行完毕，但无有效输出。"
+
+    @staticmethod
+    def _collect_artifacts(results: list[AgentResult]) -> list[Artifact]:
+        """Extract lightweight Artifact descriptions from agent outputs."""
+        artifacts: list[Artifact] = []
+        for result in results:
+            output = result.output
+            payloads: list[object] = []
+            if isinstance(output, dict):
+                if "artifact" in output:
+                    payloads.append(output["artifact"])
+                if "artifacts" in output and isinstance(output["artifacts"], list):
+                    payloads.extend(output["artifacts"])
+                if "artifact_payload" in output:
+                    payloads.append(output["artifact_payload"])
+            for payload in payloads:
+                if isinstance(payload, Artifact):
+                    artifacts.append(payload)
+                elif isinstance(payload, dict):
+                    try:
+                        artifacts.append(Artifact.model_validate(payload))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("artifact_payload_ignored", error=str(exc))
+        return artifacts
 
     @staticmethod
     def _build_fallback_response(routing: RoutingDecision) -> str:
@@ -746,10 +901,13 @@ class AgentPipeline:
         routing: RoutingDecision,
     ) -> RoutingDecision:
         """飞书中明确发给机器人的消息，即使被 Router 判 ignore，也给出普通回复。"""
-        user_ctx = task_input.user_context
+        source_ctx = task_input.source_context
         is_feishu_addressed = (
-            user_ctx.channel == "feishu"
-            and (user_ctx.is_private or task_input.is_at_bot)
+            source_ctx.channel == "feishu"
+            and (
+                source_ctx.chat_type is SourceChatType.DIRECT
+                or source_ctx.is_at_bot
+            )
         )
         if (
             not is_feishu_addressed
@@ -760,9 +918,9 @@ class AgentPipeline:
 
         logger.info(
             "pipeline.addressed_ignore_promoted",
-            channel=user_ctx.channel,
-            is_private=user_ctx.is_private,
-            is_at_bot=task_input.is_at_bot,
+            channel=source_ctx.channel,
+            chat_type=source_ctx.chat_type.value,
+            is_at_bot=source_ctx.is_at_bot,
         )
         default_subtask = SubTask(
             subtask_id="subtask_addressed_reply_1",

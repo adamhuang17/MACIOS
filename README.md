@@ -553,7 +553,7 @@ curl -X POST http://127.0.0.1:8080/api/rag/retrieve \
 - Prompt 注入防御采用规则检测与 LLM 语义检测双层组合。
 - `ADMIN_COMMAND` 会按用户角色做权限控制，普通用户会被自动降级处理。
 - `ToolAgent` 与 ReAct 工具调用都会执行管理员权限校验。
-- 会话上下文按 `user_id`、`session_id`、`group_id` 做隔离。
+- 会话上下文按 `SourceContext` 派生的 `session_key` 做隔离，优先使用 `thread_id`、`chat_id`，再退到 `sender_id`。
 
 ## 许可
 

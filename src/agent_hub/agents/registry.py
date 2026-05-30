@@ -17,6 +17,7 @@ from typing import Any
 import structlog
 
 from agent_hub.core.models import ToolSpec
+from agent_hub.core.risk import RiskPolicy, ToolProfile
 
 logger = structlog.get_logger(__name__)
 
@@ -44,6 +45,10 @@ class ToolRegistry:
         params_schema: dict[str, Any],
         func: ToolFunction,
         requires_admin: bool = False,
+        risk_level: str = "read",
+        side_effect: bool = False,
+        categories: list[str] | None = None,
+        tool_profiles: list[str] | None = None,
     ) -> None:
         """注册一个工具。"""
         spec = ToolSpec(
@@ -51,6 +56,10 @@ class ToolRegistry:
             description=description,
             params_schema=params_schema,
             requires_admin=requires_admin,
+            risk_level=risk_level,
+            side_effect=side_effect,
+            categories=categories or [],
+            tool_profiles=tool_profiles or [],
         )
         self._tools[name] = RegisteredTool(spec=spec, func=func)
         logger.debug("tool_registered", tool=name, requires_admin=requires_admin)
@@ -71,14 +80,31 @@ class ToolRegistry:
             if not rt.spec.requires_admin or role == "admin"
         ]
 
+    def list_tools_for_profile(self, profile: ToolProfile | str) -> list[ToolSpec]:
+        """列出当前 tool profile 可用的工具。"""
+        return [
+            rt.spec
+            for rt in self._tools.values()
+            if RiskPolicy.tool_allowed(rt.spec, profile)
+        ]
+
     def register_defaults(self) -> None:
         """注册所有预置工具。"""
+        read_profiles = [
+            ToolProfile.READ_ONLY.value,
+            ToolProfile.BASELINE_ARTIFACT.value,
+            ToolProfile.TOOL_ASSISTED_SAFE.value,
+            ToolProfile.ADMIN_OPS.value,
+        ]
         self.register(
             name="calculator",
             description="计算器，支持加减乘除幂运算",
             params_schema={"expression": {"type": "string", "description": "数学表达式"}},
             func=calculator_impl,
             requires_admin=False,
+            risk_level="read",
+            categories=["compute"],
+            tool_profiles=read_profiles,
         )
         self.register(
             name="file_read",
@@ -86,6 +112,9 @@ class ToolRegistry:
             params_schema={"path": {"type": "string", "description": "文件路径"}},
             func=file_read_impl,
             requires_admin=False,
+            risk_level="read",
+            categories=["fs", "read"],
+            tool_profiles=read_profiles,
         )
         self.register(
             name="file_write",
@@ -96,6 +125,10 @@ class ToolRegistry:
             },
             func=file_write_impl,
             requires_admin=True,
+            risk_level="write",
+            side_effect=True,
+            categories=["fs", "write"],
+            tool_profiles=[ToolProfile.ADMIN_OPS.value],
         )
         self.register(
             name="system_command",
@@ -103,6 +136,10 @@ class ToolRegistry:
             params_schema={"command": {"type": "string", "description": "系统命令"}},
             func=system_command_impl,
             requires_admin=True,
+            risk_level="admin",
+            side_effect=True,
+            categories=["runtime", "admin"],
+            tool_profiles=[ToolProfile.ADMIN_OPS.value],
         )
         self.register(
             name="get_current_time",
@@ -110,6 +147,9 @@ class ToolRegistry:
             params_schema={},
             func=get_current_time_impl,
             requires_admin=False,
+            risk_level="read",
+            categories=["time"],
+            tool_profiles=read_profiles,
         )
         self.register(
             name="search_web",
@@ -117,6 +157,9 @@ class ToolRegistry:
             params_schema={"query": {"type": "string", "description": "搜索关键词"}},
             func=search_web_impl,
             requires_admin=False,
+            risk_level="read",
+            categories=["web", "read"],
+            tool_profiles=read_profiles,
         )
 
 
