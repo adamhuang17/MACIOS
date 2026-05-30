@@ -91,7 +91,7 @@ def test_binding_profile_caps_requested_tool_profile() -> None:
     assert decision.tool_profile is ToolProfile.READ_ONLY
 
 
-def test_risk_policy_ignores_legacy_permission_flags() -> None:
+def test_risk_policy_ignores_routing_approval_flag() -> None:
     resolver = SourceBindingResolver()
     user = UserContext(user_id="u1", role=UserRole.ADMIN)
     source = SourceContext(channel="api", sender_id="u1", chat_type=SourceChatType.DIRECT)
@@ -99,8 +99,7 @@ def test_risk_policy_ignores_legacy_permission_flags() -> None:
     routing = RoutingDecision(
         mode=ExecutionMode.QA,
         confidence=0.9,
-        reasoning="legacy flags should not drive policy",
-        requires_admin=True,
+        reasoning="routing flags should not drive policy",
         requires_approval=True,
     )
 

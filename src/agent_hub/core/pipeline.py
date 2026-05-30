@@ -111,6 +111,12 @@ def _topological_layers(sub_tasks: list[SubTask]) -> list[list[SubTask]]:
             if dep in task_map:
                 in_degree[t.subtask_id] += 1
                 dependents[dep].append(t.subtask_id)
+            else:
+                logger.warning(
+                    "topological_layers.unknown_dep",
+                    subtask_id=t.subtask_id,
+                    unknown_dep=dep,
+                )
 
     layers: list[list[SubTask]] = []
     ready = [tid for tid, deg in in_degree.items() if deg == 0]
@@ -355,6 +361,7 @@ class AgentPipeline:
                     "route_source": routing.route_source,
                     "tool_profile": routing.tool_profile,
                     "risk_level": routing.risk_level,
+                    "requires_admin": risk.requires_admin,
                     "requires_approval": routing.requires_approval,
                 })
 
@@ -415,11 +422,16 @@ class AgentPipeline:
         if prepared.blocked_response is not None:
             yield {"type": "error", "content": prepared.blocked_response}
             return
-        if prepared.routing is None or prepared.binding is None:
+        if (
+            prepared.routing is None
+            or prepared.binding is None
+            or prepared.risk is None
+        ):
             yield {"type": "error", "content": "执行准备失败：缺少路由结果"}
             return
 
         routing = prepared.routing
+        risk = prepared.risk
         session_id = routing.session_key or prepared.binding.session_key
 
         if routing.mode == ExecutionMode.IGNORE or routing.low_confidence:
@@ -427,7 +439,7 @@ class AgentPipeline:
             return
 
         # ── Step 2: admin 权限校验（与 run() 一致） ──
-        if routing.requires_admin and user_ctx.role != UserRole.ADMIN:
+        if risk.requires_admin and user_ctx.role != UserRole.ADMIN:
             yield {
                 "type": "error",
                 "content": "⚠️ 权限不足：该操作仅限管理员使用。",
@@ -537,7 +549,11 @@ class AgentPipeline:
                         total_duration_ms=self._elapsed_ms(start_time),
                         status=prepared.blocked_status or "blocked",
                     )
-                if prepared.routing is None or prepared.binding is None:
+                if (
+                    prepared.routing is None
+                    or prepared.binding is None
+                    or prepared.risk is None
+                ):
                     return TaskOutput(
                         trace_id=trace_id,
                         user_id=user_ctx.user_id,
@@ -549,6 +565,7 @@ class AgentPipeline:
                     )
 
                 routing = prepared.routing
+                risk = prepared.risk
                 session_id = routing.session_key or prepared.binding.session_key
 
                 # ── Step 1.5: 三级缓存查询（启用时） ─────
@@ -585,7 +602,7 @@ class AgentPipeline:
                     )
 
                 # ── Step 3: 权限校验 ─────────────────────
-                if routing.requires_admin and user_ctx.role != UserRole.ADMIN:
+                if risk.requires_admin and user_ctx.role != UserRole.ADMIN:
                     return TaskOutput(
                         trace_id=trace_id,
                         user_id=user_ctx.user_id,

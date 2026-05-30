@@ -61,7 +61,6 @@ def _make_routing_decision(
     confidence: float = 0.92,
     reasoning: str = "测试推理",
     plan: list[SubTask] | None = None,
-    requires_admin: bool = False,
     capabilities: list[str] | None = None,
 ) -> RoutingDecision:
     return RoutingDecision(
@@ -69,7 +68,6 @@ def _make_routing_decision(
         confidence=confidence,
         reasoning=reasoning,
         plan=plan or [],
-        requires_admin=requires_admin,
         capabilities=capabilities or [],
     )
 
@@ -167,16 +165,20 @@ class TestRouteClassification:
 
 
 class TestPolicyFieldScrubbing:
-    """Router 不携带最终权限事实，权限由 Pipeline/RiskPolicy 计算。"""
+    """Router 不携带最终策略事实，权限由 Pipeline/RiskPolicy 计算。"""
 
     async def test_router_strips_legacy_policy_flags(
         self,
         router: DecisionRouter,
         admin_ctx: UserContext,
     ) -> None:
-        """即使内部 mock 带了旧权限字段，Router 也会清理掉。"""
-        mock_result = _make_routing_decision(
-            ExecutionMode.DELEGATE, requires_admin=True,
+        """即使内部 mock 带了策略字段，Router 也会清理掉。"""
+        mock_result = _make_routing_decision(ExecutionMode.DELEGATE).model_copy(
+            update={
+                "requires_approval": True,
+                "tool_profile": "admin_ops",
+                "risk_level": "admin",
+            },
         )
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
@@ -184,9 +186,9 @@ class TestPolicyFieldScrubbing:
             result = await router.route("重启测试服务器", admin_ctx, _TEST_SOURCE)
 
         assert result.mode == ExecutionMode.DELEGATE
-        assert result.requires_admin is False
         assert result.requires_approval is False
         assert result.tool_profile == "read_only"
+        assert result.risk_level == "read"
 
     async def test_user_delegate_decision_not_downgraded_by_router(
         self,
@@ -194,23 +196,20 @@ class TestPolicyFieldScrubbing:
         user_ctx: UserContext,
     ) -> None:
         """普通用户发出 delegate 请求 → Router 保留执行模式，权限事实留给策略层。"""
-        mock_result = _make_routing_decision(
-            ExecutionMode.DELEGATE, requires_admin=True,
-        )
+        mock_result = _make_routing_decision(ExecutionMode.DELEGATE)
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
             result = await router.route("重启测试服务器", user_ctx, _TEST_SOURCE)
 
         assert result.mode == ExecutionMode.DELEGATE
-        assert result.requires_admin is False
 
     async def test_non_admin_mode_unaffected(
         self,
         router: DecisionRouter,
         user_ctx: UserContext,
     ) -> None:
-        """普通 qa 模式不携带 requires_admin → 正常返回。"""
+        """普通 qa 模式正常返回。"""
         mock_result = _make_routing_decision(ExecutionMode.QA)
         with patch.object(
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
@@ -218,7 +217,6 @@ class TestPolicyFieldScrubbing:
             result = await router.route("公司年假政策是什么", user_ctx, _TEST_SOURCE)
 
         assert result.mode == ExecutionMode.QA
-        assert result.requires_admin is False
 
 
 # ── 测试低置信度降级 ─────────────────────────────────
@@ -352,6 +350,56 @@ class TestFallback:
 
         assert result.mode == ExecutionMode.IGNORE
         assert result.low_confidence is True
+
+    async def test_llm_exception_addressed_group_fallbacks_to_qa(
+        self,
+        router: DecisionRouter,
+        user_ctx: UserContext,
+    ) -> None:
+        source = SourceContext(
+            channel="feishu",
+            chat_id="oc_test",
+            chat_type=SourceChatType.GROUP,
+            sender_id="ou_test",
+            is_at_bot=True,
+        )
+        with patch.object(
+            router,
+            "_call_llm",
+            new_callable=AsyncMock,
+            side_effect=Exception("API timeout"),
+        ):
+            result = await router.route("make a sales report", user_ctx, source)
+
+        assert result.mode == ExecutionMode.QA
+        assert result.confidence == pytest.approx(0.3)
+        assert result.low_confidence is False
+        assert len(result.plan) == 1
+        assert result.plan[0].description == "make a sales report"
+        assert result.plan[0].required_agents == ["llm_agent"]
+
+    async def test_llm_exception_direct_chat_fallbacks_to_qa(
+        self,
+        router: DecisionRouter,
+        user_ctx: UserContext,
+    ) -> None:
+        source = SourceContext(
+            channel="feishu",
+            chat_id="ou_test",
+            chat_type=SourceChatType.DIRECT,
+            sender_id="ou_test",
+        )
+        with patch.object(
+            router,
+            "_call_llm",
+            new_callable=AsyncMock,
+            side_effect=Exception("API timeout"),
+        ):
+            result = await router.route("hello", user_ctx, source)
+
+        assert result.mode == ExecutionMode.QA
+        assert result.low_confidence is False
+        assert result.plan[0].required_agents == ["llm_agent"]
 
 
 # ── 测试子任务计划 ────────────────────────────────────

@@ -18,6 +18,7 @@ from agent_hub.core.models import (
     UserContext,
 )
 from agent_hub.core.pipeline import AgentPipeline, _topological_layers
+from agent_hub.core.risk import RiskDecision, ToolProfile
 
 # ── Fixtures ─────────────────────────────────────────
 
@@ -116,6 +117,28 @@ class TestTopologicalLayers:
         # Layer 2: D
         assert {t.subtask_id for t in layers[2]} == {"d"}
 
+    def test_unknown_dependency_warns(self) -> None:
+        tasks = [
+            SubTask(subtask_id="a", description="A", required_agents=["llm_agent"]),
+            SubTask(
+                subtask_id="b",
+                description="B",
+                required_agents=["llm_agent"],
+                depends_on=["missing"],
+            ),
+        ]
+
+        with patch("agent_hub.core.pipeline.logger.warning") as warning:
+            layers = _topological_layers(tasks)
+
+        warning.assert_called_once_with(
+            "topological_layers.unknown_dep",
+            subtask_id="b",
+            unknown_dep="missing",
+        )
+        assert len(layers) == 1
+        assert {task.subtask_id for task in layers[0]} == {"a", "b"}
+
 
 # ── Pipeline 集成测试（mock LLM） ───────────────────
 
@@ -164,7 +187,7 @@ class TestPipelineAdminPermission:
             pipeline._router,
             "route",
             new_callable=AsyncMock,
-            return_value=_mock_routing(ExecutionMode.DELEGATE, 0.95, requires_admin=True),
+            return_value=_mock_routing(ExecutionMode.DELEGATE, 0.95),
         ):
             result = await pipeline.run(_make_task("重启服务器", role=UserRole.USER))
             assert result.status == "permission_denied"
@@ -175,7 +198,6 @@ class TestPipelineAdminPermission:
         routing = _mock_routing(
             ExecutionMode.DELEGATE,
             0.95,
-            requires_admin=True,
             plan=[
                 SubTask(
                     subtask_id="st1",
@@ -193,6 +215,41 @@ class TestPipelineAdminPermission:
             result = await pipeline.run(_make_task("echo hello", role=UserRole.ADMIN))
             # 不应是 permission_denied
             assert result.status != "permission_denied"
+
+    @pytest.mark.asyncio
+    async def test_permission_gate_uses_risk_decision(
+        self,
+        pipeline: AgentPipeline,
+    ) -> None:
+        routing = _mock_routing(
+            ExecutionMode.QA,
+            0.95,
+            plan=[
+                SubTask(
+                    subtask_id="st1",
+                    description="sensitive request",
+                    required_agents=["llm_agent"],
+                ),
+            ],
+        )
+        risk = RiskDecision(
+            tool_profile=ToolProfile.READ_ONLY,
+            risk_level="admin",
+            requires_admin=True,
+        )
+        with (
+            patch.object(
+                pipeline._router,
+                "route",
+                new_callable=AsyncMock,
+                return_value=routing,
+            ),
+            patch.object(pipeline._risk_policy, "assess", return_value=risk),
+            patch.object(pipeline._risk_policy, "apply", return_value=routing),
+        ):
+            result = await pipeline.run(_make_task("sensitive", role=UserRole.USER))
+
+        assert result.status == "permission_denied"
 
 
 class TestPipelineTraceId:

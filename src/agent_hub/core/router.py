@@ -40,7 +40,13 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 from agent_hub.config.settings import Settings, get_settings
 from agent_hub.core.enums import ExecutionMode
-from agent_hub.core.models import RoutingDecision, SourceContext, SubTask, UserContext
+from agent_hub.core.models import (
+    RoutingDecision,
+    SourceChatType,
+    SourceContext,
+    SubTask,
+    UserContext,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -238,7 +244,7 @@ class DecisionRouter:
             result = await self._call_llm(system_prompt, messages)
         except Exception:
             log.warning("decision_router.llm_failed", exc_info=True)
-            return self._fallback_result("LLM调用失败，降级为忽略处理")
+            return self._llm_failure_fallback(raw_message, source_context)
 
         # 3. 清理策略字段；Router 只给执行建议，权限由 RiskPolicy 确定。
         result = self._strip_policy_fields(result)
@@ -363,7 +369,6 @@ class DecisionRouter:
     def _strip_policy_fields(result: RoutingDecision) -> RoutingDecision:
         """Remove any policy facts from Router output before Pipeline policy runs."""
         return result.model_copy(update={
-            "requires_admin": False,
             "route_source": "main",
             "agent_id": None,
             "session_key": None,
@@ -420,5 +425,35 @@ class DecisionRouter:
             reasoning=reason,
             plan=[],
             low_confidence=True,
+        )
+
+    @staticmethod
+    def _llm_failure_fallback(
+        raw_message: str,
+        source_context: SourceContext,
+    ) -> RoutingDecision:
+        """Fallback based on whether the user explicitly addressed the bot."""
+        if source_context.is_at_bot or source_context.chat_type is SourceChatType.DIRECT:
+            return RoutingDecision(
+                mode=ExecutionMode.QA,
+                confidence=0.3,
+                reasoning=(
+                    "Router LLM unavailable; message explicitly addressed the bot, "
+                    "fallback to direct LLM answer"
+                ),
+                plan=[
+                    SubTask(
+                        subtask_id="subtask_router_fallback_1",
+                        description=raw_message,
+                        required_agents=["llm_agent"],
+                        priority=1,
+                        depends_on=[],
+                    ),
+                ],
+                low_confidence=False,
+            )
+
+        return DecisionRouter._fallback_result(
+            "LLM调用失败，群聊无明确触发，降级为忽略处理"
         )
 

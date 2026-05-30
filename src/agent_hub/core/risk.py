@@ -114,14 +114,16 @@ class RiskPolicy:
         binding: BindingResult,
         decision: RiskDecision,
     ) -> RoutingDecision:
-        """Return a RoutingDecision patched with binding and risk facts."""
+        """Return a RoutingDecision patched with binding and risk facts.
+
+        ``RiskDecision.requires_admin`` remains the authoritative admin gate.
+        """
         return routing.model_copy(update={
             "route_source": binding.route_source,
             "agent_id": binding.agent_id,
             "session_key": binding.session_key,
             "tool_profile": decision.tool_profile.value,
             "risk_level": decision.risk_level,
-            "requires_admin": decision.requires_admin,
             "requires_approval": decision.requires_approval,
         })
 

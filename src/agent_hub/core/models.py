@@ -115,9 +115,6 @@ class RoutingDecision(BaseModel):
     mode: ExecutionMode
     targets: list[str] = Field(default_factory=list)
 
-    # 最终权限事实由 RiskPolicy 重算，Router 不授予权限。
-    requires_admin: bool = False
-
     capabilities: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str

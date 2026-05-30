@@ -147,7 +147,6 @@ class TestRoutingDecision:
         )
         assert rd.low_confidence is False
         assert rd.plan == []
-        assert rd.requires_admin is False
         assert rd.tool_profile == "read_only"
 
     def test_low_confidence_flag(self) -> None:
@@ -167,14 +166,14 @@ class TestRoutingDecision:
                 reasoning="超范围",
             )
 
-    def test_requires_admin_field(self) -> None:
-        rd = RoutingDecision(
-            mode=ExecutionMode.DELEGATE,
-            confidence=0.9,
-            reasoning="运维操作",
-            requires_admin=True,
-        )
-        assert rd.requires_admin is True
+    def test_rejects_requires_admin_field(self) -> None:
+        with pytest.raises(ValueError):
+            RoutingDecision(
+                mode=ExecutionMode.DELEGATE,
+                confidence=0.9,
+                reasoning="运维操作",
+                requires_admin=True,
+            )
 
     def test_capabilities_and_targets(self) -> None:
         rd = RoutingDecision(
