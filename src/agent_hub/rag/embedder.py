@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-EmbeddingProvider = Literal["local", "openai", "openai_compatible"]
+EmbeddingProvider = Literal["local", "openai", "openai_compatible", "doubao"]
 
 
 class Embedder:
@@ -20,7 +20,9 @@ class Embedder:
 
     ``provider="local"`` uses sentence-transformers. ``provider="openai"`` and
     ``provider="openai_compatible"`` use the OpenAI SDK against a configurable
-    embeddings endpoint.
+    embeddings endpoint. ``provider="doubao"`` calls the Doubao multimodal
+    embeddings API (火山方舟) which has a non-OpenAI-compatible request/response
+    format.
     """
 
     def __init__(
@@ -75,6 +77,8 @@ class Embedder:
             return []
         if self._provider == "local":
             return self._embed_local(texts)
+        if self._provider == "doubao":
+            return self._embed_doubao(texts)
         return self._embed_remote(texts)
 
     def embed_query(self, text: str) -> list[float]:
@@ -106,6 +110,57 @@ class Embedder:
         if vectors and self._dimension is None:
             self._dimension = len(vectors[0])
         return vectors
+
+    # ── Doubao (火山方舟) multimodal embeddings ──────────────────
+
+    def _embed_doubao(self, texts: list[str]) -> list[list[float]]:
+        """Embed texts via the Doubao multimodal embeddings API.
+
+        The Doubao multimodal endpoint (``/embeddings/multimodal``) merges all
+        inputs into a **single** embedding vector, so we must issue one HTTP
+        request per text to get independent vectors.
+        """
+        import requests  # type: ignore[import-untyped]
+
+        base = (self._base_url or "https://ark.cn-beijing.volces.com/api/v3").rstrip(
+            "/"
+        )
+        url = f"{base}/embeddings/multimodal"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._api_key}",
+        }
+
+        vectors: list[list[float]] = []
+        for text in texts:
+            payload = {
+                "model": self._model_name,
+                "input": [{"type": "text", "text": text}],
+            }
+            resp = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=self._timeout,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            # Doubao returns data as a dict with single "embedding" key.
+            data = body.get("data", {})
+            emb = data.get("embedding") if isinstance(data, dict) else None
+            if emb is None:
+                raise ValueError(
+                    f"Doubao embedding response missing 'data.embedding': "
+                    f"{list(body.keys())}"
+                )
+            vector = [float(v) for v in emb]
+            vectors.append(self._maybe_normalize(vector))
+
+        if vectors and self._dimension is None:
+            self._dimension = len(vectors[0])
+        return vectors
+
+    # ── Lazy initialisation helpers ──────────────────────────────
 
     def _ensure_local_model(self) -> SentenceTransformer:
         if self._model is not None:
@@ -160,6 +215,8 @@ class Embedder:
         value = (provider or "local").strip().lower().replace("-", "_")
         if value in {"local", "sentence_transformers", "sentence_transformer"}:
             return "local"
+        if value == "doubao":
+            return "doubao"
         if value in {"openai", "openai_compatible", "remote"}:
             return "openai_compatible" if value == "remote" else value
         raise ValueError(f"Unsupported embedding provider: {provider}")

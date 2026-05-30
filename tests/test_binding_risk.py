@@ -119,15 +119,30 @@ def test_risk_policy_ignores_routing_approval_flag() -> None:
 def test_tool_registry_profile_filtering() -> None:
     registry = ToolRegistry()
     registry.register_defaults()
+    registry.register(
+        "mcp__docs__search",
+        "MCP docs server search",
+        {"query": {"type": "string"}},
+        source="mcp",
+        server_name="docs",
+    )
+    registry.register(
+        "mcp__ops__deploy",
+        "MCP ops server deploy",
+        {"target": {"type": "string"}},
+        requires_admin=True,
+        risk_level="admin",
+        side_effect=True,
+        source="mcp",
+        server_name="ops",
+    )
 
     read_only_names = {tool.name for tool in registry.list_tools_for_profile("read_only")}
     admin_names = {tool.name for tool in registry.list_tools_for_profile("admin_ops")}
 
-    assert "calculator" in read_only_names
-    assert "file_write" not in read_only_names
-    assert "system_command" not in read_only_names
-    assert "file_write" in admin_names
-    assert "system_command" in admin_names
+    assert "mcp__docs__search" in read_only_names
+    assert "mcp__ops__deploy" not in read_only_names
+    assert "mcp__ops__deploy" in admin_names
 
 
 def test_subtask_plan_validator_detects_cycle() -> None:

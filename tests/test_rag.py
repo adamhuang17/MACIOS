@@ -28,7 +28,14 @@ class TestEmbedder:
         embedder = Embedder.__new__(Embedder)
         embedder._model_name = "test-model"
         embedder._device = "cpu"
+        embedder._provider = "local"
         embedder._dimension = 4
+        embedder._batch_size = 32
+        embedder._normalize = True
+        embedder._api_key = None
+        embedder._base_url = None
+        embedder._timeout = 30.0
+        embedder._client = None
         # mock model
         mock_model = MagicMock()
         import numpy as np

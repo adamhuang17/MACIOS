@@ -92,6 +92,18 @@ class ToolAgent(BaseAgent):
             )
 
         # 4. 执行工具
+        if tool.func is None:
+            return AgentResult(
+                agent_name=self.name,
+                success=False,
+                error=(
+                    f"工具 '{tool_name}' 由外部 MCP 服务提供，"
+                    "当前本地 ToolAgent 不直接执行。"
+                ),
+                duration_ms=0,
+                trace_id=subtask.subtask_id,
+            )
+
         try:
             result = await tool.func(params)
             logger.info(
@@ -129,11 +141,11 @@ class ToolAgent(BaseAgent):
         支持格式: ``工具名(参数)``，正确处理嵌套括号。
 
         Examples:
-            - ``calculator((2+3)*4)`` → ``("calculator", {"expression": "(2+3)*4"})``
-            - ``file_read(path=/tmp/a.txt)`` → ``("file_read", {"path": "/tmp/a.txt"})``
+            - ``mcp__docs__search(query=agent skills)`` →
+              ``("mcp__docs__search", {"query": "agent skills"})``
         """
-        # 先匹配工具名 + 左括号
-        name_match = re.search(r"(\w+)\(", description)
+        # Tool names may include MCP-style double underscores.
+        name_match = re.search(r"([A-Za-z_][\w]*(?:__[\w]+)*)\(", description)
         if not name_match:
             return None
 

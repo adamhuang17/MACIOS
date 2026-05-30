@@ -32,7 +32,7 @@ async def benchmark() -> None:
     test_cases: list[tuple[str, str, str]] = [
         ("帮我写一个二分查找", "user", "task_generation"),
         ("RAG的召回率怎么计算？", "user", "retrieval"),
-        ("calculator(2**10)", "user", "tool_execution"),
+        ("列出当前可用的 MCP 工具服务", "user", "tool_execution"),
         ("好的", "user", "group_chat"),
     ]
 

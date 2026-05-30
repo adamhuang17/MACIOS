@@ -179,14 +179,27 @@ class VectorStore:
                 ON {self.CHUNK_TABLE} (user_id, namespace, document_id, chunk_index)
                 """
             )
-            await conn.execute(
-                f"""
-                CREATE INDEX IF NOT EXISTS idx_{self.CHUNK_TABLE}_hnsw
-                ON {self.CHUNK_TABLE}
-                USING hnsw (embedding vector_cosine_ops)
-                WITH (m = 16, ef_construction = 200)
-                """
-            )
+            # pgvector HNSW supports up to 2000 dimensions; fall back to
+            # sequential scan for higher dimensions (e.g. Doubao 2048).
+            if self._dimension <= 2000:
+                await conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS idx_{self.CHUNK_TABLE}_hnsw
+                    ON {self.CHUNK_TABLE}
+                    USING hnsw (embedding vector_cosine_ops)
+                    WITH (m = 16, ef_construction = 200)
+                    """
+                )
+                logger.info(
+                    "vector_store_hnsw_created",
+                    dimension=self._dimension,
+                )
+            else:
+                logger.warning(
+                    "vector_store_hnsw_skipped",
+                    dimension=self._dimension,
+                    reason="HNSW only supports <=2000 dimensions; using sequential scan",
+                )
             await conn.execute(
                 f"""
                 CREATE INDEX IF NOT EXISTS idx_{self.CHUNK_TABLE}_user_ns

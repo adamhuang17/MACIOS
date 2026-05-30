@@ -91,25 +91,17 @@ async def demo_llm_agent(llm: LLMAgent) -> None:
 
 
 async def demo_tool_agent(tool_agent: ToolAgent) -> None:
-    """演示 3：ToolAgent 工具调用 - 直接执行工具。"""
-    separator("[3/6] ToolAgent 工具执行")
-    print("展示: 工具名+参数 -> 执行 -> 结果\n")
+    """演示 3：ToolAgent 工具层 - MCP schema 不在本地执行。"""
+    separator("[3/6] Tool / MCP 边界")
+    print("展示: Tool 是 MCP 暴露的可调用原语；本地 ToolAgent 不内置 demo 执行函数\n")
 
     subtask = SubTask(
         subtask_id="tool-1",
-        description="calculator((12 + 8) * 5)",
+        description="mcp__docs__search(query=agent skills)",
         required_agents=["tool_agent"],
     )
     result = await tool_agent.run(subtask, session_id="demo-sess", user_id="demo-user")
-    print(f"  calculator((12+8)*5) = {result.output}")
-
-    subtask2 = SubTask(
-        subtask_id="tool-2",
-        description="get_current_time()",
-        required_agents=["tool_agent"],
-    )
-    result2 = await tool_agent.run(subtask2, session_id="demo-sess", user_id="demo-user")
-    print(f"  get_current_time: {result2.output}")
+    print(f"  mcp__docs__search: {result.error or result.output}")
 
 
 async def demo_react(llm: LLMAgent) -> None:
@@ -213,6 +205,13 @@ async def main() -> None:
     router = DecisionRouter(settings=settings)
     registry = ToolRegistry()
     registry.register_defaults()
+    registry.register(
+        "mcp__docs__search",
+        "MCP docs server search tool",
+        {"query": {"type": "string", "description": "检索关键词"}},
+        source="mcp",
+        server_name="docs",
+    )
     memory = MemoryManager(vault_path=settings.obsidian_vault_path)
 
     llm = LLMAgent(
@@ -239,7 +238,7 @@ async def main() -> None:
 你刚才看到的 6 个核心能力:
   1. Router:    LLM 意图分类 + 子任务 DAG 拆解
   2. LLMAgent:  调用大模型生成内容
-  3. ToolAgent:  执行工具(计算器/时间等)
+  3. Tool/MCP:   区分工具 schema 与外部 MCP 执行
   4. ReAct:     LLM 自主推理 + 工具调用循环
   5. Memory:    短期记忆 + Obsidian 持久化
   6. Guard:     Prompt 注入双层防御

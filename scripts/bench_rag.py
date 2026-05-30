@@ -116,7 +116,34 @@ async def run_3_task_scenario() -> None:
     print("  实际项目中 LLM 调用延迟可能更大，加速效果更显著。")
 
 
+async def _run_rag_command(command: str) -> bool:
+    if command not in {"build-dataset", "ingest", "evaluate"}:
+        return False
+
+    from build_eval_dataset import build_dataset, evaluate, ingest
+
+    if command == "build-dataset":
+        build_dataset()
+    elif command == "ingest":
+        await ingest()
+    else:
+        await evaluate()
+    return True
+
+
 async def main() -> None:
+    if len(sys.argv) > 1:
+        handled = await _run_rag_command(sys.argv[1])
+        if not handled:
+            print(f"Unknown command: {sys.argv[1]}")
+            print("Usage:")
+            print("  python scripts/bench_rag.py")
+            print("  python scripts/bench_rag.py build-dataset")
+            print("  python scripts/bench_rag.py ingest")
+            print("  python scripts/bench_rag.py evaluate")
+            raise SystemExit(1)
+        return
+
     print("=" * 60)
     print("DAG 拓扑排序并行加速基准测试")
     print("=" * 60)

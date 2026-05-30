@@ -277,16 +277,42 @@ class AgentPipeline:
             from agent_hub.memory.memory_ops import MemoryOperator
             from agent_hub.memory.vector_memory import VectorMemory
             from agent_hub.rag.embedder import Embedder
+            from agent_hub.rag.vector_store import VectorStore
 
-            embedder = Embedder(model_name=self._settings.embedding_model)
-            vector_memory = VectorMemory(
+            embedder = Embedder(
+                model_name=self._settings.embedding_model,
+                provider=getattr(self._settings, "embedding_provider", "local"),
+                device=getattr(self._settings, "embedding_device", "") or None,
+                api_key=(
+                    getattr(self._settings, "embedding_api_key", "")
+                    or getattr(self._settings, "llm_api_key", "")
+                ),
+                base_url=getattr(self._settings, "embedding_base_url", "") or None,
+                dimension=getattr(self._settings, "embedding_dimension", 1024),
+                batch_size=getattr(self._settings, "embedding_batch_size", 32),
+                normalize=getattr(self._settings, "embedding_normalize", True),
+                timeout=float(
+                    getattr(self._settings, "embedding_timeout_seconds", 30.0),
+                ),
+            )
+            vector_store = VectorStore(
                 pg_dsn=self._settings.pg_dsn,
+                dimension=getattr(self._settings, "embedding_dimension", 1024),
+                min_pool_size=int(getattr(self._settings, "pg_pool_min_size", 1)),
+                max_pool_size=int(getattr(self._settings, "pg_pool_max_size", 10)),
+            )
+            vector_memory = VectorMemory(
+                vector_store=vector_store,
                 embedder=embedder,
             )
-            conflict_detector = ConflictDetector(embedder=embedder)
-            memory_operator = MemoryOperator(
+            conflict_detector = ConflictDetector(
                 vector_memory=vector_memory,
-                conflict_detector=conflict_detector,
+                embedder=embedder,
+                threshold=getattr(self._settings, "memory_conflict_threshold", 0.85),
+            )
+            memory_operator = MemoryOperator(
+                persistent=self._memory.persistent,
+                vector_memory=vector_memory,
             )
             self._memory.inject_vector_memory(
                 vector_memory=vector_memory,

@@ -2,7 +2,7 @@
 
 覆盖：
 - ToolRegistry 注册 / 查询 / 权限过滤
-- 预置工具安全性（calculator ast 安全解析）
+- Tool 默认不内置本地 demo 原语
 - ToolAgent 正则解析 / 权限检查 / 执行
 - LLMAgent prompt 构建 / 双 Provider 降级
 - RetrievalAgent 检索成功 / RAG 不可用降级
@@ -16,11 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agent_hub.agents.llm_agent import LLMAgent
-from agent_hub.agents.registry import (
-    ToolRegistry,
-    _safe_eval_expr,
-    calculator_impl,
-)
+from agent_hub.agents.registry import ToolRegistry
 from agent_hub.agents.retrieval_agent import RetrievalAgent
 from agent_hub.agents.tool_agent import ToolAgent
 from agent_hub.core.models import MemoryEntry, SubTask
@@ -31,9 +27,35 @@ from agent_hub.memory import MemoryManager
 
 @pytest.fixture()
 def registry() -> ToolRegistry:
-    """带预置工具的注册表。"""
+    """显式注册本地适配器与 MCP 工具 schema 的注册表。"""
     r = ToolRegistry()
-    r.register_defaults()
+
+    async def local_echo(params: dict[str, Any]) -> str:
+        return f"echo:{params.get('value', params.get('text', ''))}"
+
+    r.register(
+        "local_echo",
+        "测试用本地适配器",
+        {"value": {"type": "string"}},
+        local_echo,
+    )
+    r.register(
+        "mcp__docs__search",
+        "MCP docs server search tool",
+        {"query": {"type": "string"}},
+        source="mcp",
+        server_name="docs",
+    )
+    r.register(
+        "mcp__ops__deploy",
+        "MCP ops server deploy tool",
+        {"target": {"type": "string"}},
+        requires_admin=True,
+        risk_level="admin",
+        side_effect=True,
+        source="mcp",
+        server_name="ops",
+    )
     return r
 
 
@@ -41,7 +63,7 @@ def registry() -> ToolRegistry:
 def subtask() -> SubTask:
     return SubTask(
         subtask_id="st-test-001",
-        description="calculator(2+3*4)",
+        description="mcp__docs__search(query=agent skills)",
         required_agents=["tool_agent"],
     )
 
@@ -72,13 +94,12 @@ class TestToolRegistry:
     def test_list_tools(self, registry: ToolRegistry) -> None:
         tools = registry.list_tools()
         names = {t.name for t in tools}
-        assert "calculator" in names
-        assert "file_read" in names
-        assert "file_write" in names
-        assert "system_command" in names
-        assert "get_current_time" in names
-        assert "search_web" in names
-        assert len(tools) == 6
+        assert names == {"local_echo", "mcp__docs__search", "mcp__ops__deploy"}
+
+    def test_register_defaults_is_empty(self) -> None:
+        r = ToolRegistry()
+        r.register_defaults()
+        assert r.list_tools() == []
 
     def test_list_tools_for_user(self, registry: ToolRegistry) -> None:
         user_tools = registry.list_tools_for_user("user")
@@ -87,73 +108,15 @@ class TestToolRegistry:
         user_names = {t.name for t in user_tools}
         admin_names = {t.name for t in admin_tools}
 
-        # 普通用户不能看到 admin 专属工具
-        assert "file_write" not in user_names
-        assert "system_command" not in user_names
+        assert "mcp__ops__deploy" not in user_names
 
-        # admin 可以看到所有工具
-        assert "file_write" in admin_names
-        assert "system_command" in admin_names
-        assert "calculator" in admin_names
+        assert "mcp__ops__deploy" in admin_names
+        assert "mcp__docs__search" in admin_names
 
     def test_list_tools_for_admin_superset(self, registry: ToolRegistry) -> None:
         user_tools = {t.name for t in registry.list_tools_for_user("user")}
         admin_tools = {t.name for t in registry.list_tools_for_user("admin")}
         assert user_tools.issubset(admin_tools)
-
-
-# ══════════════════════════════════════════════════════
-# Calculator 安全性测试
-# ══════════════════════════════════════════════════════
-
-
-class TestCalculatorSafety:
-    def test_basic_arithmetic(self) -> None:
-        assert _safe_eval_expr("2 + 3") == 5
-        assert _safe_eval_expr("10 - 4") == 6
-        assert _safe_eval_expr("3 * 7") == 21
-        assert _safe_eval_expr("15 / 3") == 5.0
-
-    def test_complex_expression(self) -> None:
-        assert _safe_eval_expr("2 + 3 * 4") == 14
-        assert _safe_eval_expr("(2 + 3) * 4") == 20
-
-    def test_power(self) -> None:
-        assert _safe_eval_expr("2 ** 10") == 1024
-
-    def test_negative(self) -> None:
-        assert _safe_eval_expr("-5 + 3") == -2
-
-    def test_reject_function_call(self) -> None:
-        with pytest.raises(ValueError, match="不允许的表达式节点"):
-            _safe_eval_expr("__import__('os').system('rm -rf /')")
-
-    def test_reject_attribute_access(self) -> None:
-        with pytest.raises(ValueError, match="不允许的表达式节点"):
-            _safe_eval_expr("().__class__.__bases__")
-
-    def test_reject_name_reference(self) -> None:
-        with pytest.raises(ValueError, match="不允许的表达式节点"):
-            _safe_eval_expr("open")
-
-    def test_reject_large_power(self) -> None:
-        with pytest.raises(ValueError, match="幂指数过大"):
-            _safe_eval_expr("2 ** 100000")
-
-    def test_division_by_zero(self) -> None:
-        with pytest.raises(ZeroDivisionError):
-            _safe_eval_expr("1 / 0")
-
-    @pytest.mark.asyncio
-    async def test_calculator_impl_success(self) -> None:
-        result = await calculator_impl({"expression": "2 + 3 * 4"})
-        assert "14" in result
-        assert "计算结果" in result
-
-    @pytest.mark.asyncio
-    async def test_calculator_impl_error(self) -> None:
-        result = await calculator_impl({"expression": "import os"})
-        assert "计算错误" in result
 
 
 # ══════════════════════════════════════════════════════
@@ -164,26 +127,26 @@ class TestCalculatorSafety:
 class TestToolAgent:
     def test_parse_tool_call_simple(self, registry: ToolRegistry) -> None:
         agent = ToolAgent(registry)
-        result = agent._parse_tool_call("calculator(2+3*4)")
+        result = agent._parse_tool_call("mcp__docs__search(agent skills)")
         assert result is not None
         name, params = result
-        assert name == "calculator"
-        assert params == {"value": "2+3*4"}
+        assert name == "mcp__docs__search"
+        assert params == {"value": "agent skills"}
 
     def test_parse_tool_call_kv(self, registry: ToolRegistry) -> None:
         agent = ToolAgent(registry)
-        result = agent._parse_tool_call("file_read(path=/tmp/a.txt)")
+        result = agent._parse_tool_call("mcp__docs__search(query=agent skills)")
         assert result is not None
         name, params = result
-        assert name == "file_read"
-        assert params == {"path": "/tmp/a.txt"}
+        assert name == "mcp__docs__search"
+        assert params == {"query": "agent skills"}
 
     def test_parse_tool_call_empty_args(self, registry: ToolRegistry) -> None:
         agent = ToolAgent(registry)
-        result = agent._parse_tool_call("get_current_time()")
+        result = agent._parse_tool_call("local_echo()")
         assert result is not None
         name, params = result
-        assert name == "get_current_time"
+        assert name == "local_echo"
         assert params == {}
 
     def test_parse_tool_call_failure(self, registry: ToolRegistry) -> None:
@@ -194,38 +157,50 @@ class TestToolAgent:
         self, registry: ToolRegistry,
     ) -> None:
         agent = ToolAgent(registry)
-        assert agent._check_permission("file_write", "user") is False
-        assert agent._check_permission("system_command", "user") is False
+        assert agent._check_permission("mcp__ops__deploy", "user") is False
 
     def test_check_permission_admin_on_admin_tool(
         self, registry: ToolRegistry,
     ) -> None:
         agent = ToolAgent(registry)
-        assert agent._check_permission("file_write", "admin") is True
-        assert agent._check_permission("system_command", "admin") is True
+        assert agent._check_permission("mcp__ops__deploy", "admin") is True
 
     def test_check_permission_user_on_normal_tool(
         self, registry: ToolRegistry,
     ) -> None:
         agent = ToolAgent(registry)
-        assert agent._check_permission("calculator", "user") is True
-        assert agent._check_permission("get_current_time", "user") is True
+        assert agent._check_permission("local_echo", "user") is True
+        assert agent._check_permission("mcp__docs__search", "user") is True
 
     def test_check_permission_nonexistent(self, registry: ToolRegistry) -> None:
         agent = ToolAgent(registry)
         assert agent._check_permission("nonexistent", "admin") is False
 
     @pytest.mark.asyncio
-    async def test_run_calculator(self, registry: ToolRegistry) -> None:
+    async def test_run_local_adapter(self, registry: ToolRegistry) -> None:
         agent = ToolAgent(registry)
         st = SubTask(
             subtask_id="st-1",
-            description="calculator(2+3)",
+            description="local_echo(hello)",
             required_agents=["tool_agent"],
         )
         result = await agent.run(st, "sess-001", "u001")
         assert result.success is True
-        assert "5" in str(result.output)
+        assert "echo:hello" in str(result.output)
+
+    @pytest.mark.asyncio
+    async def test_run_mcp_tool_not_local_executable(
+        self, registry: ToolRegistry,
+    ) -> None:
+        agent = ToolAgent(registry)
+        st = SubTask(
+            subtask_id="st-mcp",
+            description="mcp__docs__search(query=agent skills)",
+            required_agents=["tool_agent"],
+        )
+        result = await agent.run(st, "sess-001", "u001")
+        assert result.success is False
+        assert "外部 MCP 服务" in str(result.error)
 
     @pytest.mark.asyncio
     async def test_run_permission_denied(self, registry: ToolRegistry) -> None:
@@ -233,7 +208,7 @@ class TestToolAgent:
         agent.set_user_role("user")
         st = SubTask(
             subtask_id="st-2",
-            description="file_write(path=a.txt,content=hello)",
+            description="mcp__ops__deploy(target=prod)",
             required_agents=["tool_agent"],
         )
         result = await agent.run(st, "sess-001", "u001")
@@ -246,12 +221,12 @@ class TestToolAgent:
         agent.set_user_role("admin")
         st = SubTask(
             subtask_id="st-3",
-            description="get_current_time()",
+            description="local_echo(admin)",
             required_agents=["tool_agent"],
         )
         result = await agent.run(st, "sess-001", "u001")
         assert result.success is True
-        assert "当前时间" in str(result.output)
+        assert "echo:admin" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_run_tool_not_found(self, registry: ToolRegistry) -> None:
@@ -525,18 +500,18 @@ class TestReActParsing:
         assert result["final_answer"] == "2+3=5"
 
     def test_parse_action(self) -> None:
-        text = "Thought: 需要计算\nAction: calculator\nAction Input: 2+3*4"
+        text = "Thought: 需要检索\nAction: mcp__docs__search\nAction Input: query=agent skills"
         result = LLMAgent._parse_react_output(text)
         assert result is not None
-        assert result["thought"] == "需要计算"
-        assert result["action"] == "calculator"
-        assert result["action_input"] == "2+3*4"
+        assert result["thought"] == "需要检索"
+        assert result["action"] == "mcp__docs__search"
+        assert result["action_input"] == "query=agent skills"
 
     def test_parse_action_no_input(self) -> None:
-        text = "Thought: 查看时间\nAction: get_current_time"
+        text = "Thought: 查看文档\nAction: mcp__docs__list"
         result = LLMAgent._parse_react_output(text)
         assert result is not None
-        assert result["action"] == "get_current_time"
+        assert result["action"] == "mcp__docs__list"
         assert result["action_input"] == ""
 
     def test_parse_empty(self) -> None:
@@ -551,13 +526,13 @@ class TestReActParsing:
         text = (
             "Thought: 第一步先分析问题\n"
             "然后确定需要调用什么工具\n"
-            "Action: calculator\n"
-            "Action Input: 100/3"
+            "Action: mcp__docs__search\n"
+            "Action Input: query=agent skills"
         )
         result = LLMAgent._parse_react_output(text)
         assert result is not None
         assert "分析问题" in result["thought"]
-        assert result["action"] == "calculator"
+        assert result["action"] == "mcp__docs__search"
 
     def test_parse_multiline_final_answer(self) -> None:
         text = "Thought: 总结\nFinal Answer: 第一行\n第二行\n第三行"
@@ -598,13 +573,23 @@ class TestReActLoop:
             agent._fallback = None  # 简化测试，禁用降级
             registry = ToolRegistry()
             registry.register_defaults()
+
+            async def local_echo(params: dict[str, Any]) -> str:
+                return f"echo:{params.get('value', '')}"
+
+            registry.register(
+                "local_echo",
+                "测试用本地适配器",
+                {"value": {"type": "string"}},
+                local_echo,
+            )
             agent.inject_registry(registry)
             return agent
 
     def test_should_use_react_with_registry(self, react_agent: LLMAgent) -> None:
         st = SubTask(
             subtask_id="st-1",
-            description="calculator(2+3)",
+            description="local_echo(hello)",
             required_agents=["tool_agent", "llm_agent"],
         )
         assert react_agent._should_use_react(st) is True
@@ -664,26 +649,26 @@ class TestReActLoop:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return "Thought: 需要计算 2+3\nAction: calculator\nAction Input: 2+3"
-            return "Thought: 计算结果是5\nFinal Answer: 2+3 的结果是 5"
+                return "Thought: 需要调用本地适配器\nAction: local_echo\nAction Input: hello"
+            return "Thought: 已拿到工具结果\nFinal Answer: 工具返回 echo:hello"
 
         react_agent._call_primary_with_system = MagicMock(side_effect=mock_llm_call)
 
         st = SubTask(
             subtask_id="st-1",
-            description="请帮我算 2+3",
+            description="请调用 echo 工具",
             required_agents=["tool_agent", "llm_agent"],
         )
         result = await react_agent.run(st, "sess-001", "u001")
         assert result.success is True
-        assert "5" in str(result.output)
+        assert "echo:hello" in str(result.output)
         assert result.react_trace is not None
         assert result.react_trace.total_rounds == 2
         assert len(result.react_trace.steps) == 2
         # 第一步应该有 action 和 observation
-        assert result.react_trace.steps[0].action == "calculator"
+        assert result.react_trace.steps[0].action == "local_echo"
         assert result.react_trace.steps[0].observation is not None
-        assert "5" in result.react_trace.steps[0].observation
+        assert "echo:hello" in result.react_trace.steps[0].observation
 
     @pytest.mark.asyncio
     async def test_react_max_rounds_reached(
@@ -691,7 +676,7 @@ class TestReActLoop:
     ) -> None:
         """达到最大轮次自动截止。"""
         react_agent._call_primary_with_system = MagicMock(
-            return_value="Thought: 需要更多信息\nAction: calculator\nAction Input: 1+1",
+            return_value="Thought: 需要更多信息\nAction: local_echo\nAction Input: loop",
         )
 
         st = SubTask(
@@ -807,17 +792,17 @@ class TestReActActionInputParsing:
     """ReAct Action Input 参数解析测试。"""
 
     def test_parse_simple_value(self) -> None:
-        result = LLMAgent._parse_action_input("2+3*4", "calculator")
-        assert result == {"expression": "2+3*4"}
+        result = LLMAgent._parse_action_input("agent skills", "mcp__docs__search")
+        assert result == {"value": "agent skills"}
 
     def test_parse_kv_format(self) -> None:
-        result = LLMAgent._parse_action_input("path=/tmp/a.txt", "file_read")
-        assert result == {"path": "/tmp/a.txt"}
+        result = LLMAgent._parse_action_input("query=agent skills", "mcp__docs__search")
+        assert result == {"query": "agent skills"}
 
     def test_parse_empty(self) -> None:
-        result = LLMAgent._parse_action_input("", "get_current_time")
+        result = LLMAgent._parse_action_input("", "mcp__docs__list")
         assert result == {}
 
-    def test_parse_non_calculator_value(self) -> None:
-        result = LLMAgent._parse_action_input("hello world", "search_web")
+    def test_parse_non_kv_value(self) -> None:
+        result = LLMAgent._parse_action_input("hello world", "local_echo")
         assert result == {"value": "hello world"}

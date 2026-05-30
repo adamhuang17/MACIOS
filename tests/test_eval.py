@@ -33,6 +33,18 @@ class TestEvalDataset:
         assert ds.pairs[0].question == "Q1"
         assert ds.pairs[1].relevant_doc_ids == ["d2", "d3"]
 
+    def test_from_jsonl_allows_retrieval_only_rows(self, tmp_path: Path) -> None:
+        jsonl = tmp_path / "retrieval_only.jsonl"
+        jsonl.write_text(
+            '{"question":"Q1","relevant_doc_ids":["d1"]}\n',
+            encoding="utf-8",
+        )
+        ds = EvalDataset.from_jsonl(jsonl)
+
+        assert len(ds) == 1
+        assert ds.pairs[0].expected_answer == ""
+        assert ds.pairs[0].relevant_doc_ids == ["d1"]
+
     def test_to_jsonl(self, tmp_path: Path) -> None:
         ds = EvalDataset([
             QAPair(question="Q1", expected_answer="A1", relevant_doc_ids=["d1"]),

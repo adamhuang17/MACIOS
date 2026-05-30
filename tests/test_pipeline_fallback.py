@@ -129,6 +129,71 @@ class TestPipelineFallback:
         should_fallback = not routing.plan and routing.mode != ExecutionMode.IGNORE
         assert should_fallback is False
 
+    def test_vector_memory_enabled_wires_runtime_components(self, tmp_path) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from agent_hub.config.settings import Settings
+
+        settings = Settings(
+            llm_api_key="test-key",
+            llm_base_url="http://localhost:1234",
+            obsidian_vault_path=str(tmp_path / "vault"),
+            guard_enabled=False,
+            cache_enabled=False,
+            vector_memory_enabled=True,
+            rate_limiter_enabled=False,
+            pg_dsn="postgresql://agent:agent@localhost:5432/agent_hub",
+            embedding_dimension=4,
+        )
+        vector_store = MagicMock(name="vector_store")
+        embedder = MagicMock(name="embedder")
+        vector_memory = MagicMock(name="vector_memory")
+        conflict_detector = MagicMock(name="conflict_detector")
+        memory_operator = MagicMock(name="memory_operator")
+
+        with (
+            patch("agent_hub.agents.llm_agent.Anthropic"),
+            patch("agent_hub.agents.llm_agent.OpenAI"),
+            patch("agent_hub.core.pipeline.RAGPipeline"),
+            patch(
+                "agent_hub.rag.vector_store.VectorStore",
+                return_value=vector_store,
+            ) as vector_store_cls,
+            patch("agent_hub.rag.embedder.Embedder", return_value=embedder) as embedder_cls,
+            patch(
+                "agent_hub.memory.vector_memory.VectorMemory",
+                return_value=vector_memory,
+            ) as vector_memory_cls,
+            patch(
+                "agent_hub.memory.conflict_detector.ConflictDetector",
+                return_value=conflict_detector,
+            ) as detector_cls,
+            patch(
+                "agent_hub.memory.memory_ops.MemoryOperator",
+                return_value=memory_operator,
+            ) as operator_cls,
+        ):
+            pipeline = AgentPipeline(settings)
+
+        embedder_cls.assert_called_once()
+        vector_store_cls.assert_called_once()
+        vector_memory_cls.assert_called_once_with(
+            vector_store=vector_store,
+            embedder=embedder,
+        )
+        detector_cls.assert_called_once_with(
+            vector_memory=vector_memory,
+            embedder=embedder,
+            threshold=settings.memory_conflict_threshold,
+        )
+        operator_cls.assert_called_once_with(
+            persistent=pipeline._memory.persistent,
+            vector_memory=vector_memory,
+        )
+        assert pipeline._memory._vector_memory is vector_memory
+        assert pipeline._memory._conflict_detector is conflict_detector
+        assert pipeline._memory._memory_operator is memory_operator
+
     @pytest.mark.asyncio
     async def test_feishu_addressed_ignore_is_promoted_to_llm(
         self,

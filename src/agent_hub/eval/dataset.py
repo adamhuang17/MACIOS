@@ -54,7 +54,7 @@ class EvalDataset:
                 obj = json.loads(line)
                 pairs.append(QAPair(
                     question=obj["question"],
-                    expected_answer=obj["expected_answer"],
+                    expected_answer=obj.get("expected_answer", ""),
                     relevant_doc_ids=obj.get("relevant_doc_ids", []),
                     metadata=obj.get("metadata", {}),
                 ))

@@ -201,7 +201,7 @@ class TestPipelineAdminPermission:
             plan=[
                 SubTask(
                     subtask_id="st1",
-                    description="system_command(echo hello)",
+                    description="mcp__ops__deploy(target=prod)",
                     required_agents=["tool_agent"],
                 ),
             ],

@@ -483,6 +483,12 @@ class LLMAgent(BaseAgent):
         # 构造参数：简单值 → {"value": ...}，key=value → 解析
         params = self._parse_action_input(action_input, tool_name)
 
+        if tool.func is None:
+            return (
+                f"错误：工具 '{tool_name}' 由外部 MCP 服务提供，"
+                "当前本地 ReAct 循环不能直接执行。"
+            )
+
         try:
             result = await tool.func(params)
             return str(result)
@@ -505,10 +511,6 @@ class LLMAgent(BaseAgent):
                     params[key.strip()] = value.strip()
             if params:
                 return params
-
-        # calculator 特殊处理
-        if tool_name == "calculator":
-            return {"expression": action_input}
 
         return {"value": action_input}
 
