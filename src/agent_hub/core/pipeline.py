@@ -861,17 +861,18 @@ class AgentPipeline:
         self,
         task_input: TaskInput,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Pipeline 流式入口：Guard → 路由 → 权限 → Agent → 逐 token yield。
+        """Pipeline 流式入口：Guard → AgentLoop → 逐 chunk yield。
 
-        与 ``run()`` 流程保持一致：先做安全检测、admin 权限校验，再串
-        Router → DAG 流式执行；执行完成后写入记忆。仅 LLMAgent 支持
-        真正的 token 级流式，其他 Agent 一次性返回。
+        流式请求统一走 ``AgentTurnLoop``，由模型在回合中按需调用可见工具。
+        执行完成后写入用户请求和已收集的流式输出到记忆。
 
         Args:
             task_input: 用户请求。
 
         Yields:
-            dict: ``{"type": "status"|"token"|"error"|"done", "content": "..."}``
+            dict: AgentLoop chunks, such as ``model_started``, ``token``,
+            ``tool_started``, ``tool_progress``, ``tool_finished``, ``final``,
+            and ``error``.
         """
         trace_id = task_input.trace_id or get_current_trace_id()
         prepared = await self._prepare_agent_loop_execution(task_input, trace_id)
@@ -923,99 +924,6 @@ class AgentPipeline:
                     tags=["execution_summary", "agent_loop", "stream"],
                 )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("stream_memory_save_failed", error=str(exc))
-        return
-
-        trace_id = task_input.trace_id or get_current_trace_id()
-        user_ctx = task_input.user_context
-        prepared = await self._prepare_execution(task_input, trace_id)
-        if prepared.blocked_response is not None:
-            yield {"type": "error", "content": prepared.blocked_response}
-            return
-        if (
-            prepared.routing is None
-            or prepared.binding is None
-            or prepared.risk is None
-        ):
-            yield {"type": "error", "content": "执行准备失败：缺少路由结果"}
-            return
-
-        routing = prepared.routing
-        risk = prepared.risk
-        session_id = routing.session_key or prepared.binding.session_key
-
-        if routing.mode == ExecutionMode.IGNORE or routing.low_confidence:
-            yield {"type": "token", "content": self._build_fallback_response(routing)}
-            return
-
-        # ── Step 2: admin 权限校验（与 run() 一致） ──
-        if risk.requires_admin and user_ctx.role != UserRole.ADMIN:
-            yield {
-                "type": "error",
-                "content": "⚠️ 权限不足：该操作仅限管理员使用。",
-            }
-            return
-
-        if not routing.plan:
-            routing = self._ensure_default_subtask(routing, task_input.raw_message)
-
-        routing = self._postprocess_subtasks(routing)
-        validation = self._plan_validator.validate(
-            routing.plan,
-            tool_profile=routing.tool_profile,
-        )
-        if not validation.valid:
-            yield {
-                "type": "error",
-                "content": f"计划校验失败：{'; '.join(validation.errors)}",
-            }
-            return
-
-        # ── Step 3: 流式执行 ────────────────────────
-        collected_outputs: list[str] = []
-        for subtask in routing.plan:
-            agent_type = subtask.required_agents[0] if subtask.required_agents else "llm_agent"
-            agent = self._agents.get(agent_type)
-
-            if agent is None:
-                yield {"type": "token", "content": f"[未知 Agent: {agent_type}]"}
-                continue
-
-            self._configure_agent_context(agent, user_ctx, routing)
-
-            # 如果 agent 支持 run_stream，使用流式
-            if hasattr(agent, "run_stream"):
-                async for chunk in agent.run_stream(subtask, session_id, user_ctx.user_id):
-                    if chunk.get("type") == "token" and chunk.get("content"):
-                        collected_outputs.append(str(chunk["content"]))
-                    yield chunk
-            else:
-                result = await agent.run(subtask, session_id, user_ctx.user_id)
-                if result.success and result.output:
-                    text = str(result.output)
-                    collected_outputs.append(text)
-                    yield {"type": "token", "content": text}
-                elif result.error:
-                    yield {"type": "error", "content": result.error}
-
-        # ── Step 4: 记忆写入（与 run() 对齐） ────────
-        try:
-            self._memory.add(
-                session_id=session_id,
-                user_id=user_ctx.user_id,
-                content=f"用户: {task_input.raw_message}",
-                memory_type="short_term",
-                tags=["user_request", routing.mode.value, "stream"],
-            )
-            if collected_outputs:
-                self._memory.add(
-                    session_id=session_id,
-                    user_id=user_ctx.user_id,
-                    content="".join(collected_outputs),
-                    memory_type="long_term",
-                    tags=["execution_summary", routing.mode.value, "stream"],
-                )
-        except Exception as exc:  # 记忆失败不应阻塞流式响应
             logger.warning("stream_memory_save_failed", error=str(exc))
 
     # ── 主入口 ───────────────────────────────────────
