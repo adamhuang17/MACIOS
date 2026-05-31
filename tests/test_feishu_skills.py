@@ -96,6 +96,55 @@ async def test_create_doc_invokes_client() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_doc_can_share_to_multiple_open_ids() -> None:
+    client = FakeFeishuClient()
+    registry = _build_registry(client)
+
+    result = await registry.invoke(
+        SkillInvocation(
+            skill_name="feishu.docs.create_doc",
+            params={
+                "title": "共享方案",
+                "folder_token": "folder-shared",
+                "share_recipient_open_ids": ["ou_leader", "ou_sub_1", "ou_sub_2"],
+            },
+        )
+    )
+
+    assert result.success is True
+    document_id = result.output["document_id"]
+    assert client.created_docs[0]["folder_token"] == "folder-shared"
+    assert client.shared_files == [
+        {
+            "file_token": document_id,
+            "member_open_id": "ou_leader",
+            "perm": "edit",
+            "need_notification": True,
+            "file_type": "docx",
+        },
+        {
+            "file_token": document_id,
+            "member_open_id": "ou_sub_1",
+            "perm": "edit",
+            "need_notification": True,
+            "file_type": "docx",
+        },
+        {
+            "file_token": document_id,
+            "member_open_id": "ou_sub_2",
+            "perm": "edit",
+            "need_notification": True,
+            "file_type": "docx",
+        },
+    ]
+    assert result.artifact_payload["metadata"]["shared_open_ids"] == [
+        "ou_leader",
+        "ou_sub_1",
+        "ou_sub_2",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_upload_file_uses_input_artifact_content() -> None:
     client = FakeFeishuClient()
     registry = _build_registry(client)

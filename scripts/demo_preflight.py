@@ -4,7 +4,7 @@
 
 1. ``python-pptx`` 是否可导入（``real.slide.render_pptx`` 必须的真实渲染依赖）；
 2. 当前 ``Settings`` 加载的关键字段（``PILOT_USE_REAL_CHAIN`` /
-   ``FEISHU_DEFAULT_FOLDER_TOKEN`` / ``FEISHU_ADMIN_OPEN_ID`` /
+   ``FEISHU_DEFAULT_FOLDER_TOKEN`` / ``FEISHU_DRIVE_URL_TEMPLATE`` /
    ``FEISHU_APP_ID`` / ``FEISHU_APP_SECRET`` / ``FEISHU_BOT_OPEN_ID``
    等）是否符合“真实演示档位”；
 3. ``pilot_artifact_dir`` 是否存在且可写。
@@ -18,6 +18,8 @@
     python scripts/demo_preflight.py --strict-real-chain   # 同时校验真实链路必备字段
 """
 
+# ruff: noqa: E402,I001
+
 from __future__ import annotations
 
 import argparse
@@ -25,6 +27,12 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except AttributeError:  # pragma: no cover - older Python fallback
+    pass
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -102,7 +110,6 @@ def check_feishu_and_real_chain(
     _ok(f"PILOT_ENABLED={s.pilot_enabled}")
     _ok(f"PILOT_USE_REAL_CHAIN={s.pilot_use_real_chain}")
     _ok(f"FEISHU_ENABLED={s.feishu_enabled}")
-    _ok(f"FEISHU_USE_LONG_CONN={s.feishu_use_long_conn}")
 
     require_real = strict_real_chain or s.pilot_use_real_chain
     if not require_real:
@@ -122,7 +129,7 @@ def check_feishu_and_real_chain(
         ("FEISHU_APP_SECRET", s.feishu_app_secret),
         ("FEISHU_BOT_OPEN_ID", s.feishu_bot_open_id),
         ("FEISHU_DEFAULT_FOLDER_TOKEN", s.feishu_default_folder_token),
-        ("FEISHU_ADMIN_OPEN_ID", s.feishu_admin_open_id),
+        ("FEISHU_DRIVE_URL_TEMPLATE", s.feishu_drive_url_template),
     ]
     for name, value in required_pairs:
         if not value:
@@ -132,13 +139,15 @@ def check_feishu_and_real_chain(
             masked = value[:4] + "…" if len(value) > 6 else value
             _ok(f"{name}={masked}")
 
-    # 长连接以外的部署：webhook 必须配 verification_token
-    if not s.feishu_use_long_conn and not s.feishu_verification_token:
-        _fail(
-            "FEISHU_USE_LONG_CONN=false 且未配置 FEISHU_VERIFICATION_TOKEN，"
-            "webhook 验签会失败。",
+    if s.feishu_admin_open_id:
+        masked = (
+            s.feishu_admin_open_id[:4] + "…"
+            if len(s.feishu_admin_open_id) > 6
+            else s.feishu_admin_open_id
         )
-        failures.append("缺少 FEISHU_VERIFICATION_TOKEN（webhook 模式）")
+        _ok(f"FEISHU_ADMIN_OPEN_ID={masked}（仅作为兜底分享对象）")
+    else:
+        _warn("FEISHU_ADMIN_OPEN_ID 为空；将按每条飞书消息的请求人 open_id 私发文件。")
 
 
 def main() -> int:

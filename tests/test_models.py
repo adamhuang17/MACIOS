@@ -53,24 +53,24 @@ class TestUserContext:
 
     def test_rejects_source_fields(self) -> None:
         with pytest.raises(ValueError):
-            UserContext(user_id="u002", role=UserRole.USER, channel="qq")
+            UserContext(user_id="u002", role=UserRole.USER, channel="feishu")
 
 
 class TestSourceContext:
     def test_source_facts(self) -> None:
         source = SourceContext(
-            channel="qq",
+            channel="feishu",
             chat_id="g100",
             chat_type=SourceChatType.GROUP,
             sender_id="u002",
         )
-        assert source.channel == "qq"
+        assert source.channel == "feishu"
         assert source.chat_id == "g100"
         assert source.chat_type is SourceChatType.GROUP
 
     def test_rejects_unknown_source_fields(self) -> None:
         with pytest.raises(ValueError):
-            SourceContext(channel="qq", session_id="legacy-session")
+            SourceContext(channel="feishu", session_id="legacy-session")
 
 
 # ── TaskInput 测试 ────────────────────────────────────
@@ -82,7 +82,7 @@ class TestTaskInput:
             user_context=UserContext(
                 user_id="u001", role=UserRole.USER,
             ),
-            source_context=SourceContext(channel="dingtalk", sender_id="u001"),
+            source_context=SourceContext(channel="feishu", sender_id="u001"),
             raw_message="你好",
         )
         assert len(task.trace_id) == 36  # UUID 格式
@@ -95,7 +95,7 @@ class TestTaskInput:
             user_context=UserContext(
                 user_id="u001", role=UserRole.USER,
             ),
-            source_context=SourceContext(channel="qq", sender_id="u001"),
+            source_context=SourceContext(channel="feishu", sender_id="u001"),
             raw_message="子任务",
             parent_trace_id="parent-trace-123",
         )
@@ -115,7 +115,7 @@ class TestTaskInput:
             user_context=UserContext(
                 user_id="u001", role=UserRole.USER,
             ),
-            source_context=SourceContext(channel="dingtalk", sender_id="u001"),
+            source_context=SourceContext(channel="feishu", sender_id="u001"),
             raw_message="测试序列化",
         )
         data = task.model_dump()

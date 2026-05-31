@@ -21,20 +21,9 @@ class Settings(BaseSettings):
     所有字段均可通过同名环境变量覆盖（不区分大小写）。
 
     Attributes:
-        anthropic_api_key: Anthropic API 密钥。
-        anthropic_model: 默认使用的 Claude 模型。
-        dingtalk_app_key: 钉钉应用 App Key。
-        dingtalk_app_secret: 钉钉应用 App Secret。
-        dingtalk_robot_code: 钉钉机器人编码。
-        qq_bot_app_id: QQ 机器人 App ID。
-        qq_bot_token: QQ 机器人 Token。
-        qq_bot_secret: QQ 机器人 Secret。
         neo4j_uri: Neo4j 数据库连接 URI。
         neo4j_user: Neo4j 用户名。
         neo4j_password: Neo4j 密码。
-        openclaw_host: OpenClaw 虚拟机主机地址。
-        openclaw_port: OpenClaw 服务端口。
-        openclaw_api_key: OpenClaw API 密钥。
         vm_shared_dir: 虚拟机共享目录路径。
         host_data_dir: 宿主机数据目录路径。
         allowed_file_extensions: 允许上传的文件扩展名。
@@ -53,25 +42,10 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
     llm_model: str = "glm-4-flash"
 
-    # ── 钉钉 ─────────────────────────────────────────
-    dingtalk_app_key: str = ""
-    dingtalk_app_secret: str = ""
-    dingtalk_robot_code: str = ""
-
-    # ── QQ 机器人 ─────────────────────────────────────
-    qq_bot_app_id: str = ""
-    qq_bot_token: str = ""
-    qq_bot_secret: str = ""
-
     # ── Neo4j ─────────────────────────────────────────
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = ""
-
-    # ── OpenClaw ──────────────────────────────────────
-    openclaw_host: str = "127.0.0.1"
-    openclaw_port: int = 8443
-    openclaw_api_key: str = ""
 
     # ── RAG ────────────────────────────────────────────
     rag_api_base: str = "http://localhost:8000"
@@ -169,10 +143,6 @@ class Settings(BaseSettings):
     feishu_app_secret: str = ""
     # 自建应用 / 应用商店应用；目前只校验存在，不区分鉴权差异。
     feishu_app_type: str = "self_built"
-    # 事件订阅校验：URL verification 用 verification_token；
-    # 加密事件需要 encrypt_key（AES-256，留空表示不解密）。
-    feishu_verification_token: str = ""
-    feishu_encrypt_key: str = ""
     # 开放平台 API base，可指向飞书国际版 / lark.com。
     feishu_api_base_url: str = "https://open.feishu.cn"
     feishu_request_timeout_ms: int = 12_000
@@ -181,7 +151,8 @@ class Settings(BaseSettings):
     feishu_webhook_dedup_max_entries: int = 4_096
     # Drive 默认上传目录 token；留空表示根目录。
     feishu_default_folder_token: str = ""
-    # 管理员 open_id，上传后自动分享文件给该用户；留空不分享。
+    # 兜底 open_id：正常飞书任务会优先分享给本次请求人的 open_id；
+    # 仅在无法从入站消息取得请求人 open_id 时才使用该值。
     feishu_admin_open_id: str = ""
     # Drive 文件可访问 URL 模板，{file_token} 占位符将被替换。
     # 例如租户域 https://xxx.feishu.cn/file/{file_token} 或通用 https://www.feishu.cn/file/{file_token}。
@@ -193,10 +164,6 @@ class Settings(BaseSettings):
     feishu_trigger_keywords: str = ""
     # 是否需要 mention 机器人才触发（仅群聊生效）。
     feishu_require_mention_in_group: bool = True
-    # webhook 路由路径（挂在主 app 下）。
-    feishu_callback_path: str = "/api/feishu/webhook"
-    # 长连接模式（无公网地址时使用）：True 时主动连接飞书 WebSocket 服务器
-    feishu_use_long_conn: bool = False
 
     # ── 文件路径 & 安全 ──────────────────────────────
     vm_shared_dir: str = "/mnt/shared"

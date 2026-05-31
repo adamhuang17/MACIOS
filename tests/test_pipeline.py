@@ -25,7 +25,10 @@ from agent_hub.core.risk import RiskDecision, ToolProfile
 
 @pytest.fixture()
 def settings():
-    return get_settings()
+    # lru_cache 返回全局共享实例；为每个 pipeline 实例强制关闭缓存，
+    # 防止 L1/L2 cache 命中在测试间泄漏 status="cache_hit"。
+    base = get_settings()
+    return base.model_copy(update={"cache_enabled": False, "vector_memory_enabled": False})
 
 
 @pytest.fixture()

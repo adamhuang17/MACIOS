@@ -191,13 +191,14 @@ class TemplatePlanGateway:
         skills: dict[str, str],
         chat_id: str,
     ) -> list[PlanStepDraft]:
+        context_skill = _context_skill_name(ctx, skills)
         return [
             PlanStepDraft(
                 ref="ctx",
                 title="收集上下文",
                 kind=PlanStepKind.READ_CONTEXT,
-                skill_name=skills["context"],
-                input_params={"origin_text": ctx.raw_text},
+                skill_name=context_skill,
+                input_params=_context_input_params(ctx, chat_id),
                 output_artifact_ref="ctx",
                 risk_level=RiskLevel.READ,
             ),
@@ -240,7 +241,7 @@ class TemplatePlanGateway:
                 title="上传 Drive 并生成分享",
                 kind=PlanStepKind.UPLOAD,
                 skill_name=skills["upload"],
-                input_params={},
+                input_params=_upload_input_params(ctx),
                 inputs_from=["pptx"],
                 output_artifact_ref="share",
                 depends_on=["pptx"],
@@ -249,10 +250,10 @@ class TemplatePlanGateway:
             ),
             PlanStepDraft(
                 ref="summary",
-                title="回传群聊摘要",
+                title="私发生成结果",
                 kind=PlanStepKind.SUMMARIZE,
                 skill_name=skills["summary"],
-                input_params={"chat_id": chat_id, "title": f"{title} 已完成"},
+                input_params=_summary_delivery_params(ctx, chat_id, title),
                 inputs_from=["share"],
                 output_artifact_ref="summary",
                 depends_on=["share"],
@@ -268,13 +269,14 @@ class TemplatePlanGateway:
         skills: dict[str, str],
         chat_id: str = "",
     ) -> list[PlanStepDraft]:
+        context_skill = _context_skill_name(ctx, skills)
         return [
             PlanStepDraft(
                 ref="ctx",
                 title="收集上下文",
                 kind=PlanStepKind.READ_CONTEXT,
-                skill_name=skills["context"],
-                input_params={"origin_text": ctx.raw_text},
+                skill_name=context_skill,
+                input_params=_context_input_params(ctx, chat_id),
                 output_artifact_ref="ctx",
                 risk_level=RiskLevel.READ,
             ),
@@ -294,7 +296,7 @@ class TemplatePlanGateway:
                 title="上传 Drive 并生成分享",
                 kind=PlanStepKind.UPLOAD,
                 skill_name=skills["upload"],
-                input_params={"file_name": f"{title}.md"},
+                input_params={"file_name": f"{title}.md", **_upload_input_params(ctx)},
                 inputs_from=["brief"],
                 output_artifact_ref="share",
                 depends_on=["brief"],
@@ -303,10 +305,10 @@ class TemplatePlanGateway:
             ),
             PlanStepDraft(
                 ref="summary",
-                title="回传群聊摘要",
+                title="私发生成结果",
                 kind=PlanStepKind.SUMMARIZE,
                 skill_name=skills["summary"],
-                input_params={"chat_id": chat_id, "title": f"{title} 已完成"},
+                input_params=_summary_delivery_params(ctx, chat_id, title),
                 inputs_from=["share"],
                 output_artifact_ref="summary",
                 depends_on=["share"],
@@ -322,13 +324,14 @@ class TemplatePlanGateway:
         skills: dict[str, str],
         chat_id: str,
     ) -> list[PlanStepDraft]:
+        context_skill = _context_skill_name(ctx, skills)
         return [
             PlanStepDraft(
                 ref="ctx",
                 title="收集上下文",
                 kind=PlanStepKind.READ_CONTEXT,
-                skill_name=skills["context"],
-                input_params={"origin_text": ctx.raw_text},
+                skill_name=context_skill,
+                input_params=_context_input_params(ctx, chat_id),
                 output_artifact_ref="ctx",
                 risk_level=RiskLevel.READ,
             ),
@@ -360,13 +363,15 @@ class TemplatePlanGateway:
             or "",
         )
         instruction = str(meta.get("revision_instruction") or ctx.raw_text or "")
+        chat_id = ctx.source_conversation_id or ""
+        context_skill = _context_skill_name(ctx, skills)
         return [
             PlanStepDraft(
                 ref="ctx",
                 title="重新收集上下文",
                 kind=PlanStepKind.READ_CONTEXT,
-                skill_name=skills["context"],
-                input_params={"origin_text": ctx.raw_text},
+                skill_name=context_skill,
+                input_params=_context_input_params(ctx, chat_id),
                 output_artifact_ref="ctx",
                 risk_level=RiskLevel.READ,
             ),
@@ -386,6 +391,197 @@ class TemplatePlanGateway:
                 risk_level=RiskLevel.READ,
             ),
         ]
+
+
+def _context_skill_name(ctx: PlanContext, skills: dict[str, str]) -> str:
+    if (
+        ctx.source_channel == "feishu"
+        and ctx.source_conversation_id
+        and skills["context"] == "internal.context.assemble"
+    ):
+        return "feishu.im.fetch_recent"
+    return skills["context"]
+
+
+def _context_input_params(ctx: PlanContext, chat_id: str) -> dict[str, Any]:
+    metadata = dict(ctx.metadata or {})
+    params: dict[str, Any] = {
+        "origin_text": ctx.raw_text,
+        "attachments": list(ctx.attachments),
+        "source_message_id": ctx.source_message_id,
+        "context_scope": {
+            "channel": ctx.source_channel or "",
+            "chat_id": chat_id,
+            "message_id": ctx.source_message_id or "",
+        },
+    }
+    if ctx.source_channel == "feishu" and chat_id:
+        params["chat_id"] = chat_id
+        params["page_size"] = int(metadata.get("feishu_context_page_size") or 20)
+    return params
+
+
+def _upload_input_params(ctx: PlanContext) -> dict[str, Any]:
+    open_id = _feishu_requester_open_id(ctx)
+    metadata = dict(ctx.metadata or {})
+    params: dict[str, Any] = {}
+    if open_id:
+        params["member_open_id"] = open_id
+        params["share_recipient_open_id"] = open_id
+
+    folder_token = _feishu_target_folder_token(ctx)
+    if folder_token:
+        params["folder_token"] = folder_token
+
+    shared_open_ids = _collect_open_ids(
+        metadata.get("feishu_share_recipient_open_ids"),
+        metadata.get("feishu_shared_open_ids"),
+        metadata.get("share_recipient_open_ids"),
+        metadata.get("shared_open_ids"),
+    )
+    if _feishu_file_visibility(ctx) == "shared" and shared_open_ids:
+        params["share_recipient_open_ids"] = shared_open_ids
+    return params
+
+
+def _summary_delivery_params(
+    ctx: PlanContext,
+    chat_id: str,
+    title: str,
+) -> dict[str, Any]:
+    receive_id, receive_id_type = _feishu_private_receive(ctx, chat_id)
+    params: dict[str, Any] = {
+        "chat_id": receive_id,
+        "receive_id": receive_id,
+        "receive_id_type": receive_id_type,
+        "title": f"{title} 已完成",
+    }
+    if ctx.source_channel == "feishu":
+        params["delivery_mode"] = "private"
+        params["source_chat_id"] = chat_id
+    return params
+
+
+def _feishu_private_receive(ctx: PlanContext, fallback_chat_id: str) -> tuple[str, str]:
+    metadata = dict(ctx.metadata or {})
+    if ctx.source_channel == "feishu":
+        receive_id = str(
+            metadata.get("feishu_private_receive_id")
+            or metadata.get("feishu_requester_open_id")
+            or ctx.requester_id
+            or ""
+        ).strip()
+        receive_id_type = str(
+            metadata.get("feishu_private_receive_id_type")
+            or metadata.get("feishu_sender_id_type")
+            or "open_id"
+        ).strip() or "open_id"
+        if receive_id:
+            return receive_id, receive_id_type
+    return fallback_chat_id, "chat_id"
+
+
+def _feishu_requester_open_id(ctx: PlanContext) -> str:
+    metadata = dict(ctx.metadata or {})
+    explicit = str(metadata.get("feishu_requester_open_id") or "").strip()
+    if explicit:
+        return explicit
+    sender_type = str(
+        metadata.get("feishu_private_receive_id_type")
+        or metadata.get("feishu_sender_id_type")
+        or ""
+    )
+    if ctx.source_channel == "feishu" and sender_type in ("", "open_id"):
+        return str(
+            metadata.get("feishu_private_receive_id")
+            or metadata.get("feishu_sender_id")
+            or ctx.requester_id
+            or ""
+        ).strip()
+    return ""
+
+
+def _feishu_file_visibility(ctx: PlanContext) -> str:
+    metadata = dict(ctx.metadata or {})
+    explicit = str(
+        metadata.get("feishu_file_visibility")
+        or metadata.get("file_visibility")
+        or metadata.get("drive_visibility")
+        or ""
+    ).strip().lower()
+    if explicit in {"shared", "share", "public", "team"}:
+        return "shared"
+    if explicit in {"private", "personal"}:
+        return "private"
+    text = (ctx.raw_text or "").lower()
+    if any(k in text for k in ("共享文件", "共享文档", "共享给", "分享给")):
+        return "shared"
+    return "private"
+
+
+def _feishu_target_folder_token(ctx: PlanContext) -> str:
+    metadata = dict(ctx.metadata or {})
+    explicit = str(
+        metadata.get("feishu_folder_token") or metadata.get("folder_token") or ""
+    ).strip()
+    if explicit:
+        return explicit
+    visibility = _feishu_file_visibility(ctx)
+    if visibility == "shared":
+        return str(
+            metadata.get("feishu_shared_folder_token")
+            or metadata.get("shared_folder_token")
+            or ""
+        ).strip()
+    return str(
+        metadata.get("feishu_private_folder_token")
+        or metadata.get("private_folder_token")
+        or ""
+    ).strip()
+
+
+def _collect_open_ids(*values: object) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for item in _iter_open_ids(value):
+            if item and item not in seen:
+                seen.add(item)
+                result.append(item)
+    return result
+
+
+def _iter_open_ids(value: object):  # noqa: ANN202
+    if value is None:
+        return
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = None
+            if parsed is not None:
+                yield from _iter_open_ids(parsed)
+                return
+        for part in raw.replace("；", ",").replace(";", ",").split(","):
+            item = part.strip()
+            if item:
+                yield item
+        return
+    if isinstance(value, dict):
+        for key in ("open_id", "member_open_id", "user_id"):
+            if key in value:
+                yield from _iter_open_ids(value[key])
+        return
+    try:
+        iterator = iter(value)
+    except TypeError:
+        return
+    for item in iterator:
+        yield from _iter_open_ids(item)
 
 
 # 兼容别名：M1~M4 期间所有调用方使用的名字。
@@ -541,7 +737,37 @@ class OpenAIModelGateway:
             "skill_mode": self._skill_mode,
             "model": self._model,
         }
+        blueprint = _apply_feishu_private_delivery(blueprint, ctx)
         return blueprint.model_copy(update={"metadata": merged_meta})
+
+
+def _apply_feishu_private_delivery(
+    blueprint: PlanBlueprint,
+    ctx: PlanContext,
+) -> PlanBlueprint:
+    if ctx.source_channel != "feishu":
+        return blueprint
+
+    chat_id = ctx.source_conversation_id or ""
+    title = (ctx.title or ctx.raw_text[:32] or "Untitled Task").strip()
+    new_steps: list[PlanStepDraft] = []
+    for step in blueprint.steps:
+        input_params = dict(step.input_params)
+        skill_name = step.skill_name
+        if skill_name == "internal.context.assemble" and chat_id:
+            skill_name = "feishu.im.fetch_recent"
+            input_params = {**_context_input_params(ctx, chat_id), **input_params}
+        elif skill_name == "feishu.im.fetch_recent":
+            input_params = {**_context_input_params(ctx, chat_id), **input_params}
+        elif skill_name == "real.drive.upload_share":
+            input_params = {**input_params, **_upload_input_params(ctx)}
+        elif skill_name == "feishu.im.send_message":
+            input_params = {**input_params, **_summary_delivery_params(ctx, chat_id, title)}
+        new_steps.append(step.model_copy(update={
+            "skill_name": skill_name,
+            "input_params": input_params,
+        }))
+    return blueprint.model_copy(update={"steps": new_steps})
 
 
 __all__ = [

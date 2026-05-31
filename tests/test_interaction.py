@@ -1,0 +1,298 @@
+"""InteractionService + /api/interactions 端点测试。
+
+覆盖四种意图路径，验证 InteractionService.handle() 行为，
+以及 /api/interactions 的 HTTP 请求 / 响应结构。
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from agent_hub.contracts.identity import SourceChatType, SourceContext, UserContext, UserRole
+from agent_hub.contracts.interaction import InboundRequest, InteractionIntent
+from agent_hub.pilot.services.interaction import InteractionResult, InteractionService
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _req(
+    text: str = "",
+    chat_type: SourceChatType = SourceChatType.DIRECT,
+    is_at_bot: bool = False,
+    message_type: str = "text",
+    channel: str = "api",
+    chat_id: str = "chat-1",
+) -> InboundRequest:
+    return InboundRequest(
+        user_context=UserContext(user_id="u1", role=UserRole.USER),
+        source_context=SourceContext(
+            channel=channel,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            is_at_bot=is_at_bot,
+        ),
+        text=text,
+        message_type=message_type,
+    )
+
+
+# ── 分类测试 ──────────────────────────────────────────────────────────────────
+
+
+class TestInteractionServiceClassify:
+    def test_empty_text_is_ignored(self) -> None:
+        svc = InteractionService()
+        intent, _, reason, _ = svc._classify(_req(text=""))
+        assert intent is InteractionIntent.IGNORE
+        assert reason == "empty_text"
+
+    def test_task_keyword_routes_to_start_task(self) -> None:
+        svc = InteractionService()
+        intent, keywords, _, _ = svc._classify(_req(text="帮我做一份 PPT"))
+        assert intent is InteractionIntent.START_TASK
+        assert len(keywords) > 0
+
+    def test_progress_query_with_question_mark(self) -> None:
+        svc = InteractionService()
+        intent, _, _, _ = svc._classify(_req(text="刚才那个任务进度怎么样？"))
+        assert intent is InteractionIntent.PROGRESS_QUERY
+
+    def test_ordinary_qa(self) -> None:
+        svc = InteractionService()
+        intent, _, _, _ = svc._classify(_req(text="RAG 是什么？"))
+        # 不含任务关键词，不含进度关键词 -> ORDINARY_QA
+        assert intent is InteractionIntent.ORDINARY_QA
+
+    def test_group_without_mention_is_ignored(self) -> None:
+        svc = InteractionService()
+        intent, _, reason, _ = svc._classify(
+            _req(text="你好", chat_type=SourceChatType.GROUP, is_at_bot=False)
+        )
+        assert intent is InteractionIntent.IGNORE
+        assert reason == "group_without_mention"
+
+    def test_group_with_mention_routes_to_qa(self) -> None:
+        svc = InteractionService()
+        intent, _, _, _ = svc._classify(
+            _req(text="你好", chat_type=SourceChatType.GROUP, is_at_bot=True)
+        )
+        assert intent is InteractionIntent.ORDINARY_QA
+
+    def test_non_text_message_routes_to_start_task(self) -> None:
+        svc = InteractionService()
+        intent, _, reason, _ = svc._classify(_req(text="", message_type="file"))
+        assert intent is InteractionIntent.START_TASK
+        assert reason == "non_text_message"
+
+
+# ── handle() 异步测试 ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_empty_text_returns_ignore() -> None:
+    result = await InteractionService().handle(_req(text=""))
+    assert result.intent is InteractionIntent.IGNORE
+    assert result.task_id is None
+
+
+@pytest.mark.asyncio
+async def test_handle_qa_without_pipeline_degrades() -> None:
+    result = await InteractionService().handle(_req(text="生命的意义是什么"))
+    assert result.intent is InteractionIntent.ORDINARY_QA
+    assert result.reply_text is not None
+    assert "暂未启用" in result.reply_text
+
+
+@pytest.mark.asyncio
+async def test_handle_qa_with_pipeline() -> None:
+    pipeline = MagicMock()
+    pipeline.run = AsyncMock(return_value=MagicMock(response="42"))
+    result = await InteractionService(pipeline=pipeline).handle(
+        _req(text="生命的意义是什么")
+    )
+    assert result.intent is InteractionIntent.ORDINARY_QA
+    assert result.reply_text == "42"
+
+
+@pytest.mark.asyncio
+async def test_handle_start_task_without_orchestrator_degrades() -> None:
+    result = await InteractionService().handle(_req(text="帮我做一份汇报 PPT"))
+    assert result.intent is InteractionIntent.START_TASK
+    assert result.task_id is None
+    assert result.reply_text is not None
+    assert "暂未启用" in result.reply_text
+
+
+@pytest.mark.asyncio
+async def test_handle_start_task_with_orchestrator() -> None:
+    from agent_hub.pilot.domain.enums import TaskStatus
+    from agent_hub.pilot.domain.models import Workspace
+    from agent_hub.pilot.services.dto import TaskHandle
+
+    mock_handle = TaskHandle(
+        workspace_id="ws-1",
+        task_id="task-1",
+        plan_id="plan-1",
+        status=TaskStatus.CREATED,
+        trace_id="trace-1",
+    )
+    orchestrator = MagicMock()
+    orchestrator.submit = AsyncMock(return_value=mock_handle)
+    repo = MagicMock()
+    repo.find_workspace_by_conversation = AsyncMock(return_value=None)
+    repo.save = AsyncMock(return_value=None)
+
+    svc = InteractionService(orchestrator=orchestrator, repository=repo)
+    mock_ws = Workspace(
+        workspace_id="ws-1",
+        title="test ws",
+        source_channel="api",
+        source_conversation_id="chat-1",
+        created_by="u1",
+    )
+    with patch.object(svc, "_find_or_create_workspace", AsyncMock(return_value=mock_ws)):
+        result = await svc.handle(_req(text="帮我做一份汇报 PPT"))
+
+    assert result.intent is InteractionIntent.START_TASK
+    assert result.task_id == "task-1"
+    assert result.workspace_id == "ws-1"
+    assert result.deduplicated is False
+
+
+@pytest.mark.asyncio
+async def test_handle_progress_no_workspace() -> None:
+    repo = MagicMock()
+    repo.find_workspace_by_conversation = AsyncMock(return_value=None)
+    queries = MagicMock()
+    result = await InteractionService(queries=queries, repository=repo).handle(
+        _req(text="刚才任务进度怎么样？")
+    )
+    assert result.intent is InteractionIntent.PROGRESS_QUERY
+    assert result.reply_text is not None
+    assert "还没有创建过任务" in result.reply_text
+
+
+@pytest.mark.asyncio
+async def test_handle_progress_with_tasks() -> None:
+    from agent_hub.pilot.domain.enums import TaskStatus
+
+    mock_task = MagicMock()
+    mock_task.title = "测试任务"
+    mock_task.status = TaskStatus.RUNNING
+    mock_task.pending_approvals = 0
+    mock_task.artifact_count = 2
+
+    mock_ws = MagicMock()
+    mock_ws.workspace_id = "ws-x"
+
+    repo = MagicMock()
+    repo.find_workspace_by_conversation = AsyncMock(return_value=mock_ws)
+    queries = MagicMock()
+    queries.list_tasks = AsyncMock(return_value=[mock_task])
+
+    result = await InteractionService(queries=queries, repository=repo).handle(
+        _req(text="刚才任务进度怎么样？")
+    )
+    assert result.intent is InteractionIntent.PROGRESS_QUERY
+    assert "测试任务" in (result.reply_text or "")
+    assert "running" in (result.reply_text or "").lower()
+
+
+# ── /api/interactions HTTP 端点测试 ───────────────────────────────────────────
+
+
+@pytest.fixture()
+def interactions_app() -> Iterator[FastAPI]:
+    """构造仅含 /api/interactions 路由的最小 FastAPI 应用（pilot demo 模式）。"""
+    from agent_hub.api.interactions_routes import build_interactions_router
+    from agent_hub.api.pilot_runtime import build_pilot_runtime
+    from agent_hub.config.settings import Settings
+
+    settings = Settings(
+        api_keys=["test-key"],
+        pilot_enabled=True,
+        pilot_store_path="",
+        pilot_demo_mode=True,
+        pilot_auto_approve_writes=False,
+        pilot_admin_token="admin-secret",
+        public_base_url="",
+        feishu_enabled=False,
+        pilot_use_real_gateway=False,
+        pilot_use_real_chain=False,
+    )
+    runtime = build_pilot_runtime(settings)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            await runtime.aclose()
+
+    fa = FastAPI(lifespan=lifespan)
+    fa.include_router(build_interactions_router(runtime))
+    yield fa
+
+
+@pytest.fixture()
+def ic_client(interactions_app: FastAPI) -> Iterator[TestClient]:
+    with TestClient(interactions_app) as c:
+        yield c
+
+
+def _post(client: TestClient, **overrides: object) -> dict:
+    body: dict = {
+        "user_id": "tester",
+        "text": "RAG 是什么？",
+    }
+    body.update(overrides)
+    resp = client.post("/api/interactions", json=body)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_interactions_ordinary_qa_returns_reply(ic_client: TestClient) -> None:
+    data = _post(ic_client, text="RAG 是什么？")
+    assert data["intent"] == "ordinary_qa"
+    assert "trace_id" in data
+
+
+def test_interactions_ignore_empty_text(ic_client: TestClient) -> None:
+    data = _post(ic_client, text="")
+    assert data["intent"] == "ignore"
+
+
+def test_interactions_start_task_returns_intent(ic_client: TestClient) -> None:
+    data = _post(ic_client, text="帮我做一份季度汇报 PPT")
+    assert data["intent"] == "start_task"
+
+
+def test_interactions_trace_id_passthrough(ic_client: TestClient) -> None:
+    data = _post(ic_client, text="你好", trace_id="my-trace-abc")
+    assert data["trace_id"] == "my-trace-abc"
+
+
+def test_interactions_group_without_mention_ignored(ic_client: TestClient) -> None:
+    data = _post(
+        ic_client,
+        text="你好大家",
+        chat_type="group",
+        is_at_bot=False,
+    )
+    assert data["intent"] == "ignore"
+
+
+def test_interactions_unknown_role_defaults_to_user(ic_client: TestClient) -> None:
+    # 未知 role 应回退而非报错
+    resp = ic_client.post(
+        "/api/interactions",
+        json={"user_id": "u1", "role": "unknown_role", "text": "你好"},
+    )
+    assert resp.status_code == 200

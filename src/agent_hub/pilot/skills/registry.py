@@ -195,7 +195,13 @@ class SkillRegistry:
         return result
 
 
+# ── 语义别名 —— Phase 1 内涉名规范化 ──────────────────────────────────────────────
+# ActionRegistry 是 SkillRegistry 的规范名称，强调就是“业务动作等为山中标”。
+# SkillRegistry 与 capabilities.InstructionSkill、agents.ToolRegistry 区分开来。
+ActionRegistry = SkillRegistry
+
 __all__ = [
+    "ActionRegistry",
     "DryRunUnsupported",
     "RegisteredSkill",
     "SideEffect",

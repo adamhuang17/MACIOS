@@ -81,7 +81,6 @@ class FeishuInboundMessage(BaseModel):
 class FeishuWebhookOutcome(StrEnum):
     """webhook 处理结果，方便测试与日志统一断言。"""
 
-    CHALLENGE = "challenge"
     ACCEPTED = "accepted"
     DUPLICATE = "duplicate"
     IGNORED = "ignored"

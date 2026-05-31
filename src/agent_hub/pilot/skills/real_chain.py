@@ -283,6 +283,15 @@ def _make_real_upload_share_skill(
         params = inv.params
         file_name = str(params.get("file_name", "") or "deck.pptx")
         folder_token = str(params.get("folder_token", "") or default_folder_token) or None
+        recipient_open_ids = _collect_open_ids(
+            params.get("member_open_id"),
+            params.get("share_recipient_open_id"),
+            params.get("recipient_open_id"),
+            params.get("member_open_ids"),
+            params.get("share_recipient_open_ids"),
+            params.get("recipient_open_ids"),
+            params.get("shared_open_ids"),
+        )
 
         upstream = params.get("input_artifacts", {}) or {}
         # 兼容 PPTX / 任意文件 / Brief Markdown / Doc 上游，让该 skill 可以复用为
@@ -324,6 +333,8 @@ def _make_real_upload_share_skill(
                     "file_name": file_name,
                     "byte_size": len(content_bytes),
                     "would_upload": True,
+                    "share_recipient_open_ids": recipient_open_ids
+                    or ([admin_open_id] if admin_open_id else []),
                 },
             )
 
@@ -345,18 +356,28 @@ def _make_real_upload_share_skill(
             except (KeyError, IndexError):
                 share_url = ""
 
-        # 上传成功后自动将文件分享给管理员协作者
+        # Prefer explicit requester/shared open_ids for per-task delivery; keep
+        # admin_open_id only as a backward-compatible fallback.
         # need_notification=True 让飞书主动发一条带可点击链接的"与我共享"通知。
-        if admin_open_id and uploaded.file_token:
-            try:
-                await client.share_file(
-                    file_token=uploaded.file_token,
-                    member_open_id=admin_open_id,
-                    perm="edit",
-                    need_notification=True,
-                )
-            except FeishuApiError:
-                logger.warning("drive_share_failed", file_token=uploaded.file_token)
+        share_member_open_ids = recipient_open_ids or (
+            [admin_open_id] if admin_open_id else []
+        )
+        if uploaded.file_token:
+            for open_id in share_member_open_ids:
+                try:
+                    await client.share_file(
+                        file_token=uploaded.file_token,
+                        member_open_id=open_id,
+                        perm="edit",
+                        need_notification=True,
+                        file_type="file",
+                    )
+                except FeishuApiError:
+                    logger.warning(
+                        "drive_share_failed",
+                        file_token=uploaded.file_token,
+                        member_open_id=open_id,
+                    )
 
         return SkillResult(
             skill_name=inv.skill_name,
@@ -375,6 +396,10 @@ def _make_real_upload_share_skill(
                     "file_token": uploaded.file_token,
                     "share_url": share_url,
                     "file_name": file_name,
+                    "shared_open_id": share_member_open_ids[0]
+                    if share_member_open_ids
+                    else "",
+                    "shared_open_ids": share_member_open_ids,
                 },
                 "metadata": {
                     "file_token": uploaded.file_token,
@@ -382,6 +407,10 @@ def _make_real_upload_share_skill(
                     "byte_size": uploaded.size,
                     "folder_token": folder_token or "",
                     "share_url": share_url,
+                    "shared_open_id": share_member_open_ids[0]
+                    if share_member_open_ids
+                    else "",
+                    "shared_open_ids": share_member_open_ids,
                 },
             },
         )
@@ -397,6 +426,51 @@ def _make_real_upload_share_skill(
         timeout_ms=45_000,
     )
     return spec, _upload
+
+
+def _collect_open_ids(*values: object) -> list[str]:
+    """Collect comma/list-style open_id inputs while preserving order."""
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for item in _iter_open_ids(value):
+            if item and item not in seen:
+                seen.add(item)
+                result.append(item)
+    return result
+
+
+def _iter_open_ids(value: object):  # noqa: ANN202
+    if value is None:
+        return
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = None
+            if parsed is not None:
+                yield from _iter_open_ids(parsed)
+                return
+        for part in raw.replace("；", ",").replace(";", ",").split(","):
+            item = part.strip()
+            if item:
+                yield item
+        return
+    if isinstance(value, dict):
+        for key in ("open_id", "member_open_id", "user_id"):
+            if key in value:
+                yield from _iter_open_ids(value[key])
+        return
+    try:
+        iterator = iter(value)
+    except TypeError:
+        return
+    for item in iterator:
+        yield from _iter_open_ids(item)
 
 
 # ── 注册入口 ────────────────────────────────────────

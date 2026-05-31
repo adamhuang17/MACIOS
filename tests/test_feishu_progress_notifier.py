@@ -93,6 +93,50 @@ async def test_feishu_progress_notifier_sends_task_progress_message() -> None:
 
 
 @pytest.mark.asyncio
+async def test_feishu_progress_notifier_uses_private_delivery_target() -> None:
+    store = InMemoryEventStore()
+    repo = PilotRepository(store)
+    client = FakeFeishuClient()
+    notifier = FeishuProgressNotifier(repo, client, min_interval_seconds=1)
+
+    workspace = Workspace(
+        title="飞书任务",
+        source_channel="feishu",
+        source_conversation_id="oc_group_1",
+        feishu_chat_id="oc_group_1",
+        created_by="ou_user",
+        members=["ou_user"],
+        status=WorkspaceStatus.ACTIVE,
+    )
+    task = Task(
+        workspace_id=workspace.workspace_id,
+        origin_text="帮我生成 Agent-Hub 项目路演 PPT",
+        requester_id="ou_user",
+        metadata={
+            "feishu_delivery_mode": "private",
+            "feishu_private_receive_id": "ou_user",
+            "feishu_private_receive_id_type": "open_id",
+        },
+    )
+    await repo.save(workspace, expected_version=None)
+    await repo.save(task, expected_version=None)
+
+    notifier.handle_event(ExecutionEvent(
+        workspace_id=workspace.workspace_id,
+        trace_id=task.trace_id,
+        task_id=task.task_id,
+        type=EventType.TASK_PROGRESS,
+        message="正在执行：渲染 PPTX",
+        payload={"phase": "step_running", "kind": "milestone"},
+    ))
+    await _wait_for_messages(client, 1)
+    await notifier.aclose()
+
+    assert client.sent_messages[0]["receive_id"] == "ou_user"
+    assert client.sent_messages[0]["receive_id_type"] == "open_id"
+
+
+@pytest.mark.asyncio
 async def test_feishu_progress_notifier_silences_task_progress_while_approval_pending() -> None:
     store = InMemoryEventStore()
     repo = PilotRepository(store)

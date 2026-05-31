@@ -1,14 +1,12 @@
-"""飞书 webhook 验签 / 解密 / 去重 / 规范化。
+"""飞书事件去重 / 规范化 / 过滤。
+
+仅服务于 WebSocket 长连接模式：
+:meth:`FeishuWebhookProcessor.handle_event_dict` 接收已由 SDK 解包的
+事件 dict，执行 event_id 去重、消息规范化、自消息过滤、mention 过滤
+与关键字触发判断，输出 :class:`FeishuWebhookResult`。
 
 设计要点：
 
-- :meth:`FeishuWebhookProcessor.handle_payload` 是唯一对外入口，
-  返回 :class:`FeishuWebhookResult`，FastAPI 路由层只负责把它映射成
-  HTTP 响应；
-- URL verification (challenge) 与正式事件复用同一个入口；
-- ``encrypt`` 字段存在时才会触发 AES 解密，否则按明文 JSON 处理。
-  AES 解密依赖 ``cryptography``，缺失时会以 :class:`FeishuWebhookError`
-  失败并提示用户安装；
 - ``event_id`` 的去重通过 TTL + 容量上限的 LRU dict 实现，避免无界
   内存增长；
 - 规范化阶段对 ``im.message.receive_v1`` 做 best-effort 解析，其它
@@ -19,7 +17,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import json
 import re
@@ -93,12 +90,12 @@ class _TtlLru:
 
 
 class FeishuWebhookProcessor:
-    """承载验签 / 解密 / 去重 / 规范化的纯逻辑组件。
+    """承载去重 / 规范化 / 过滤的纯逻辑组件。
+
+    仅通过 :meth:`handle_event_dict` 接收已由 WebSocket SDK 解包的事件 dict，
+    执行去重、消息规范化、自消息/mention/关键字过滤。
 
     Args:
-        verification_token: 事件订阅校验 token；为空时跳过校验
-            （仅供本地开发，**不要**在生产为空）。
-        encrypt_key: AES-256 key；为空时不解密。
         bot_open_id: 用于识别 ``@bot``；为空表示不强制 mention 才触发。
         require_mention_in_group: 群聊里是否必须 ``@bot`` 才视为命中。
         trigger_keywords: 命中关键字才触发；空集合表示不过滤。
@@ -108,8 +105,6 @@ class FeishuWebhookProcessor:
     def __init__(
         self,
         *,
-        verification_token: str = "",
-        encrypt_key: str = "",
         bot_open_id: str = "",
         ignore_self_messages: bool = True,
         require_mention_in_group: bool = True,
@@ -117,8 +112,6 @@ class FeishuWebhookProcessor:
         dedup_ttl_seconds: int = 600,
         dedup_max_entries: int = 4096,
     ) -> None:
-        self._verification_token = verification_token
-        self._encrypt_key = encrypt_key
         self._bot_open_id = bot_open_id.strip()
         self._ignore_self_messages = ignore_self_messages
         self._require_mention_in_group = require_mention_in_group
@@ -127,41 +120,6 @@ class FeishuWebhookProcessor:
             max_entries=dedup_max_entries,
             ttl_seconds=dedup_ttl_seconds,
         )
-
-    async def handle_payload(self, payload: dict[str, Any]) -> FeishuWebhookResult:
-        """处理一条 webhook 入站 payload（含验签 / 解密）。"""
-        if not isinstance(payload, dict):
-            raise FeishuWebhookError("payload must be a JSON object")
-
-        if "encrypt" in payload:
-            payload = self._decrypt_envelope(payload)
-
-        # URL verification challenge（schema=v1 即 type=url_verification；
-        # schema=v2 也能命中，header.event_type 不同但都会带 challenge）。
-        if payload.get("type") == "url_verification" or "challenge" in payload:
-            self._verify_token_v1(payload)
-            challenge = str(payload.get("challenge", ""))
-            return FeishuWebhookResult(
-                outcome=FeishuWebhookOutcome.CHALLENGE,
-                challenge=challenge,
-            )
-
-        header = payload.get("header") or {}
-        if header:
-            self._verify_token_v2(header)
-            event_type = str(header.get("event_type", ""))
-            event_id = str(header.get("event_id", ""))
-            tenant_key = header.get("tenant_key")
-            app_id = header.get("app_id")
-        else:
-            self._verify_token_v1(payload)
-            event_payload = payload.get("event") or {}
-            event_type = str(payload.get("event_type") or event_payload.get("type", ""))
-            event_id = str(payload.get("uuid", ""))
-            tenant_key = payload.get("tenant_key")
-            app_id = (payload.get("app_id") or "")
-
-        return await self._dispatch(payload, header, event_type, event_id, tenant_key, app_id)
 
     async def handle_event_dict(self, payload: dict[str, Any]) -> FeishuWebhookResult:
         """处理已解包的事件 dict，跳过验签与解密（供长连接模式使用）。
@@ -278,61 +236,6 @@ class FeishuWebhookProcessor:
 
 
     # ── 内部 ───────────────────────────────────────
-
-    def _decrypt_envelope(self, payload: dict[str, Any]) -> dict[str, Any]:
-        if not self._encrypt_key:
-            raise FeishuWebhookError("encrypted payload received but encrypt_key is empty")
-        cipher_b64 = payload.get("encrypt")
-        if not isinstance(cipher_b64, str):
-            raise FeishuWebhookError("encrypt field must be string")
-        try:
-            from cryptography.hazmat.primitives.ciphers import (  # type: ignore[import-not-found]
-                Cipher,
-                algorithms,
-                modes,
-            )
-        except ImportError as exc:  # pragma: no cover - optional dep
-            raise FeishuWebhookError(
-                "cryptography package required to decrypt feishu webhook events"
-            ) from exc
-
-        try:
-            ciphertext = base64.b64decode(cipher_b64)
-        except (ValueError, base64.binascii.Error) as exc:
-            raise FeishuWebhookError("encrypt field is not valid base64") from exc
-        if len(ciphertext) < 32:
-            raise FeishuWebhookError("encrypt payload too short")
-        key = hashlib.sha256(self._encrypt_key.encode("utf-8")).digest()
-        iv = ciphertext[:16]
-        body = ciphertext[16:]
-        cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
-        decryptor = cipher.decryptor()
-        plaintext_padded = decryptor.update(body) + decryptor.finalize()
-        pad = plaintext_padded[-1]
-        if pad < 1 or pad > 16:
-            raise FeishuWebhookError("invalid pkcs7 padding")
-        plaintext = plaintext_padded[:-pad]
-        try:
-            decoded = json.loads(plaintext.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise FeishuWebhookError("decrypted payload is not valid json") from exc
-        if not isinstance(decoded, dict):
-            raise FeishuWebhookError("decrypted payload must be json object")
-        return decoded
-
-    def _verify_token_v1(self, payload: dict[str, Any]) -> None:
-        if not self._verification_token:
-            return
-        token = payload.get("token")
-        if token != self._verification_token:
-            raise FeishuWebhookError("verification_token mismatch")
-
-    def _verify_token_v2(self, header: dict[str, Any]) -> None:
-        if not self._verification_token:
-            return
-        token = header.get("token")
-        if token != self._verification_token:
-            raise FeishuWebhookError("verification_token mismatch")
 
     def _apply_mention_flag(self, message: FeishuInboundMessage) -> FeishuInboundMessage:
         if not self._bot_open_id:

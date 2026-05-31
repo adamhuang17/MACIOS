@@ -11,6 +11,8 @@
     E:/Anaconda/envs/Agent-Hub/python.exe scripts/offline_verify.py
 """
 
+# ruff: noqa: E402,I001
+
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +21,12 @@ import sys
 import uuid
 from pathlib import Path
 from typing import Any
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except AttributeError:  # pragma: no cover - older Python fallback
+    pass
 
 ROOT = Path(__file__).resolve().parents[1]
 os.chdir(ROOT)

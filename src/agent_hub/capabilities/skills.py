@@ -265,3 +265,9 @@ def _validate_description(description: str) -> list[str]:
     if len(description) > MAX_DESCRIPTION_LENGTH:
         return [f"description exceeds {MAX_DESCRIPTION_LENGTH} characters"]
     return []
+
+
+# ── 语义别名 ──────────────────────────────────────────────────────────────────
+# InstructionSkill 是 SkillPackage 的规范名称：“指令技能”——不可执行的提示词包。
+# 与 pilot.skills.SkillSpec（业务技能）区分开来。
+InstructionSkill = SkillPackage

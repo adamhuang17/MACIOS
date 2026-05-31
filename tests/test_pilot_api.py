@@ -30,7 +30,6 @@ def app() -> Iterator[FastAPI]:
         pilot_admin_token="admin-secret",
         public_base_url="",
         feishu_enabled=False,
-        feishu_use_long_conn=False,
         pilot_use_real_gateway=False,
         pilot_use_real_chain=False,
     )
@@ -344,7 +343,6 @@ def auto_client(tmp_path) -> Iterator[TestClient]:
         pilot_admin_token="admin-secret",
         public_base_url="",
         feishu_enabled=False,
-        feishu_use_long_conn=False,
         pilot_use_real_gateway=False,
         pilot_use_real_chain=False,
         pilot_artifact_dir=str(tmp_path / "artifacts"),

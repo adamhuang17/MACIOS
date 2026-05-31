@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from typing import Any
 
 from agent_hub.connectors.feishu.client import FeishuApiError, FeishuClientProtocol
@@ -119,6 +120,17 @@ def _make_create_doc_skill(
         params = inv.params
         title = str(params.get("title", "") or "Untitled Doc")
         folder_token = str(params.get("folder_token", "") or default_folder_token) or None
+        share_open_ids = _collect_open_ids(
+            params.get("member_open_id"),
+            params.get("share_recipient_open_id"),
+            params.get("recipient_open_id"),
+            params.get("member_open_ids"),
+            params.get("share_recipient_open_ids"),
+            params.get("recipient_open_ids"),
+            params.get("shared_open_ids"),
+        )
+        perm = str(params.get("perm", "edit") or "edit")
+        need_notification = bool(params.get("need_notification", True))
 
         if inv.dry_run:
             return SkillResult(
@@ -128,6 +140,7 @@ def _make_create_doc_skill(
                     "title": title,
                     "folder_token": folder_token,
                     "would_create": True,
+                    "would_share_open_ids": share_open_ids,
                 },
             )
 
@@ -136,6 +149,16 @@ def _make_create_doc_skill(
         except FeishuApiError as exc:
             return SkillResult(skill_name=inv.skill_name, success=False, error=str(exc))
 
+        for open_id in share_open_ids:
+            with suppress(FeishuApiError):
+                await client.share_file(
+                    file_token=created.document_id,
+                    member_open_id=open_id,
+                    perm=perm,
+                    need_notification=need_notification,
+                    file_type="docx",
+                )
+
         return SkillResult(
             skill_name=inv.skill_name,
             success=True,
@@ -143,6 +166,7 @@ def _make_create_doc_skill(
                 "document_id": created.document_id,
                 "url": created.url,
                 "revision_id": created.revision_id,
+                "shared_open_ids": share_open_ids,
             },
             artifact_payload={
                 "type": ArtifactType.FEISHU_DOC.value,
@@ -152,12 +176,14 @@ def _make_create_doc_skill(
                     "document_id": created.document_id,
                     "url": created.url,
                     "title": title,
+                    "shared_open_ids": share_open_ids,
                 },
                 "metadata": {
                     "document_id": created.document_id,
                     "url": created.url,
                     "revision_id": created.revision_id,
                     "folder_token": folder_token or "",
+                    "shared_open_ids": share_open_ids,
                 },
             },
         )
@@ -285,15 +311,15 @@ def _make_upload_file_skill(
 def _make_send_message_skill(client: FeishuClientProtocol) -> tuple[SkillSpec, Any]:
     async def _send(inv: SkillInvocation) -> SkillResult:
         params = inv.params
-        chat_id = str(params.get("chat_id", "") or "")
+        receive_id = str(params.get("receive_id") or params.get("chat_id") or "")
         text = _build_message_text(params)
         msg_type = str(params.get("msg_type", "text") or "text")
         receive_id_type = str(params.get("receive_id_type", "chat_id") or "chat_id")
-        if not chat_id:
+        if not receive_id:
             return SkillResult(
                 skill_name=inv.skill_name,
                 success=False,
-                error="missing required param: chat_id",
+                error="missing required param: receive_id/chat_id",
             )
         if not text:
             return SkillResult(
@@ -313,7 +339,9 @@ def _make_send_message_skill(client: FeishuClientProtocol) -> tuple[SkillSpec, A
                 skill_name=inv.skill_name,
                 success=True,
                 output={
-                    "chat_id": chat_id,
+                    "receive_id": receive_id,
+                    "chat_id": receive_id,
+                    "receive_id_type": receive_id_type,
                     "msg_type": msg_type,
                     "char_count": len(text),
                     "would_send": True,
@@ -322,7 +350,7 @@ def _make_send_message_skill(client: FeishuClientProtocol) -> tuple[SkillSpec, A
 
         try:
             sent = await client.send_message(
-                receive_id=chat_id,
+                receive_id=receive_id,
                 receive_id_type=receive_id_type,
                 msg_type=msg_type,
                 content=content,
@@ -336,6 +364,8 @@ def _make_send_message_skill(client: FeishuClientProtocol) -> tuple[SkillSpec, A
             output={
                 "message_id": sent.message_id,
                 "chat_id": sent.chat_id,
+                "receive_id": receive_id,
+                "receive_id_type": receive_id_type,
                 "char_count": len(text),
             },
             artifact_payload={
@@ -346,6 +376,8 @@ def _make_send_message_skill(client: FeishuClientProtocol) -> tuple[SkillSpec, A
                 "metadata": {
                     "message_id": sent.message_id,
                     "chat_id": sent.chat_id,
+                    "receive_id": receive_id,
+                    "receive_id_type": receive_id_type,
                     "msg_type": msg_type,
                 },
             },
@@ -358,7 +390,7 @@ def _make_send_message_skill(client: FeishuClientProtocol) -> tuple[SkillSpec, A
         requires_approval=True,
         supports_dry_run=True,
         scopes=FEISHU_SCOPES,
-        idempotency_key_fields=["chat_id", "title"],
+        idempotency_key_fields=["receive_id", "chat_id", "title"],
         timeout_ms=15_000,
     )
     return spec, _send
@@ -432,6 +464,51 @@ def _build_message_text(params: dict[str, Any]) -> str:
         lines.append("（飞书已单独推送一条「与我共享」通知，可直接点击打开）")
 
     return "\n".join(lines).strip()
+
+
+def _collect_open_ids(*values: object) -> list[str]:
+    """Collect comma/list-style open_id inputs while preserving order."""
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for item in _iter_open_ids(value):
+            if item and item not in seen:
+                seen.add(item)
+                result.append(item)
+    return result
+
+
+def _iter_open_ids(value: object):  # noqa: ANN202
+    if value is None:
+        return
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = None
+            if parsed is not None:
+                yield from _iter_open_ids(parsed)
+                return
+        for part in raw.replace("；", ",").replace(";", ",").split(","):
+            item = part.strip()
+            if item:
+                yield item
+        return
+    if isinstance(value, dict):
+        for key in ("open_id", "member_open_id", "user_id"):
+            if key in value:
+                yield from _iter_open_ids(value[key])
+        return
+    try:
+        iterator = iter(value)
+    except TypeError:
+        return
+    for item in iterator:
+        yield from _iter_open_ids(item)
 
 
 # ── 注册入口 ────────────────────────────────────────

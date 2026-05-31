@@ -28,6 +28,15 @@ from agent_hub.pilot.services.model_gateway import (
     TemplatePlanGateway,
     derive_plan_profile,
 )
+from agent_hub.pilot.services.ingress import (
+    IngressDecision,
+    IngressIntent,
+    PilotIngressService,
+)
+from agent_hub.pilot.services.interaction import (
+    InteractionResult,
+    InteractionService,
+)
 from agent_hub.pilot.services.orchestrator import TaskOrchestrator
 from agent_hub.pilot.services.planning import (
     REQUIRED_KINDS,
@@ -54,6 +63,11 @@ __all__ = [
     "FakeModelGateway",
     "ModelGateway",
     "OpenAIModelGateway",
+    "IngressDecision",
+    "IngressIntent",
+    "InteractionResult",
+    "InteractionService",
+    "PilotIngressService",
     "PilotCommandService",
     "PilotEventPublisher",
     "PilotQueryService",

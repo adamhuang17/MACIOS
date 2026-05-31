@@ -53,7 +53,119 @@ async def test_upload_share_includes_share_metadata_and_auto_shares() -> None:
             "member_open_id": "ou_admin",
             "perm": "edit",
             "need_notification": True,
+            "file_type": "file",
         }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_upload_share_prefers_requester_open_id_over_admin_fallback() -> None:
+    client = FakeFeishuClient()
+    registry = SkillRegistry()
+
+    async def reader(_artifact_id: str) -> bytes:
+        return b"pptx-content"
+
+    register_real_chain_skills(
+        registry,
+        feishu_client=client,
+        artifact_reader=reader,
+        default_folder_token="folder-x",
+        admin_open_id="ou_admin",
+    )
+
+    result = await registry.invoke(
+        SkillInvocation(
+            skill_name="real.drive.upload_share",
+            params={
+                "file_name": "deck.pptx",
+                "member_open_id": "ou_requester",
+                "input_artifacts": {
+                    "pptx": {
+                        "artifact_id": "art-pptx",
+                        "type": "pptx",
+                        "content": b"pptx-content",
+                    }
+                },
+            },
+        )
+    )
+
+    assert result.success is True
+    assert client.shared_files[0]["member_open_id"] == "ou_requester"
+    assert result.artifact_payload["metadata"]["shared_open_id"] == "ou_requester"
+    assert result.artifact_payload["metadata"]["shared_open_ids"] == ["ou_requester"]
+
+
+@pytest.mark.asyncio
+async def test_upload_share_uses_shared_folder_and_notifies_all_open_ids() -> None:
+    """共享文件应进共享文件夹，并给请求人和共享人都加权限/通知。"""
+    client = FakeFeishuClient()
+    registry = SkillRegistry()
+
+    async def reader(_artifact_id: str) -> bytes:
+        return b"pptx-content"
+
+    register_real_chain_skills(
+        registry,
+        feishu_client=client,
+        artifact_reader=reader,
+        default_folder_token="folder-private",
+    )
+
+    result = await registry.invoke(
+        SkillInvocation(
+            skill_name="real.drive.upload_share",
+            params={
+                "file_name": "shared-deck.pptx",
+                "folder_token": "folder-shared",
+                "member_open_id": "ou_5f91fff5b8c696e875817ad56d745441",
+                "share_recipient_open_ids": [
+                    "ou_subordinate_1",
+                    "ou_subordinate_2",
+                    "ou_5f91fff5b8c696e875817ad56d745441",
+                ],
+                "input_artifacts": {
+                    "pptx": {
+                        "artifact_id": "art-pptx",
+                        "type": "pptx",
+                        "content": b"pptx-content",
+                    }
+                },
+            },
+        )
+    )
+
+    assert result.success is True
+    assert client.uploaded_files[0]["parent_node"] == "folder-shared"
+    token = result.artifact_payload["content"]["file_token"]
+    assert client.shared_files == [
+        {
+            "file_token": token,
+            "member_open_id": "ou_5f91fff5b8c696e875817ad56d745441",
+            "perm": "edit",
+            "need_notification": True,
+            "file_type": "file",
+        },
+        {
+            "file_token": token,
+            "member_open_id": "ou_subordinate_1",
+            "perm": "edit",
+            "need_notification": True,
+            "file_type": "file",
+        },
+        {
+            "file_token": token,
+            "member_open_id": "ou_subordinate_2",
+            "perm": "edit",
+            "need_notification": True,
+            "file_type": "file",
+        },
+    ]
+    assert result.artifact_payload["metadata"]["shared_open_ids"] == [
+        "ou_5f91fff5b8c696e875817ad56d745441",
+        "ou_subordinate_1",
+        "ou_subordinate_2",
     ]
 
 

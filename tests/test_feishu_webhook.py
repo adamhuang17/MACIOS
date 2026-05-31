@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 
 import pytest
@@ -12,7 +10,6 @@ from agent_hub.connectors.feishu import (
     FakeFeishuClient,
     FeishuChatType,
     FeishuMessageType,
-    FeishuWebhookError,
     FeishuWebhookOutcome,
     FeishuWebhookProcessor,
     FeishuWebhookService,
@@ -74,7 +71,6 @@ def _text_message_event(
     event_id: str = "evt-001",
     message_id: str = "om_msg_1",
     mentions: list[dict] | None = None,
-    token: str = "",
 ) -> dict:
     body = {
         "schema": "2.0",
@@ -82,7 +78,7 @@ def _text_message_event(
             "event_id": event_id,
             "event_type": "im.message.receive_v1",
             "create_time": "1700000000",
-            "token": token,
+            "token": "",
             "app_id": "cli_app",
             "tenant_key": "tenant1",
         },
@@ -109,28 +105,9 @@ def _text_message_event(
 
 
 @pytest.mark.asyncio
-async def test_processor_url_challenge_returns_challenge() -> None:
-    proc = FeishuWebhookProcessor(verification_token="vt")
-    result = await proc.handle_payload(
-        {"type": "url_verification", "challenge": "ch-1", "token": "vt"},
-    )
-    assert result.outcome is FeishuWebhookOutcome.CHALLENGE
-    assert result.challenge == "ch-1"
-
-
-@pytest.mark.asyncio
-async def test_processor_invalid_token_raises() -> None:
-    proc = FeishuWebhookProcessor(verification_token="vt")
-    with pytest.raises(FeishuWebhookError):
-        await proc.handle_payload(
-            {"type": "url_verification", "challenge": "x", "token": "wrong"},
-        )
-
-
-@pytest.mark.asyncio
 async def test_processor_normalize_text_message() -> None:
-    proc = FeishuWebhookProcessor(verification_token="vt")
-    result = await proc.handle_payload(_text_message_event(token="vt"))
+    proc = FeishuWebhookProcessor()
+    result = await proc.handle_event_dict(_text_message_event())
     assert result.outcome is FeishuWebhookOutcome.ACCEPTED
     assert result.message is not None
     assert result.message.text == "请帮我写一份介绍"
@@ -144,12 +121,10 @@ async def test_processor_normalize_text_message() -> None:
 @pytest.mark.asyncio
 async def test_processor_ignores_bot_self_message() -> None:
     proc = FeishuWebhookProcessor(
-        verification_token="vt",
         bot_open_id="ou_bot",
     )
-    result = await proc.handle_payload(
+    result = await proc.handle_event_dict(
         _text_message_event(
-            token="vt",
             sender_id="ou_bot",
             event_id="evt-self",
             message_id="om_self",
@@ -163,10 +138,9 @@ async def test_processor_ignores_bot_self_message() -> None:
 
 @pytest.mark.asyncio
 async def test_processor_ignores_app_sender_message() -> None:
-    proc = FeishuWebhookProcessor(verification_token="vt")
-    result = await proc.handle_payload(
+    proc = FeishuWebhookProcessor()
+    result = await proc.handle_event_dict(
         _text_message_event(
-            token="vt",
             sender_id="ou_unknown_app",
             sender_type="app",
             event_id="evt-app-sender",
@@ -181,10 +155,10 @@ async def test_processor_ignores_app_sender_message() -> None:
 
 @pytest.mark.asyncio
 async def test_processor_dedup_event_id() -> None:
-    proc = FeishuWebhookProcessor(verification_token="vt")
-    payload = _text_message_event(token="vt")
-    first = await proc.handle_payload(payload)
-    again = await proc.handle_payload(payload)
+    proc = FeishuWebhookProcessor()
+    payload = _text_message_event()
+    first = await proc.handle_event_dict(payload)
+    again = await proc.handle_event_dict(payload)
     assert first.outcome is FeishuWebhookOutcome.ACCEPTED
     assert again.outcome is FeishuWebhookOutcome.DUPLICATE
 
@@ -192,28 +166,25 @@ async def test_processor_dedup_event_id() -> None:
 @pytest.mark.asyncio
 async def test_processor_group_chat_requires_mention() -> None:
     proc = FeishuWebhookProcessor(
-        verification_token="vt",
         bot_open_id="ou_bot",
         require_mention_in_group=True,
     )
     no_mention = _text_message_event(
-        token="vt",
         chat_type="group",
         event_id="evt-no-mention",
         message_id="om_2",
     )
-    result = await proc.handle_payload(no_mention)
+    result = await proc.handle_event_dict(no_mention)
     assert result.outcome is FeishuWebhookOutcome.IGNORED
 
     with_mention = _text_message_event(
-        token="vt",
         chat_type="group",
         event_id="evt-with-mention",
         message_id="om_3",
         text="@_user_1 你好，这是一条测试内容",
         mentions=[{"id": {"open_id": "ou_bot"}}],
     )
-    result = await proc.handle_payload(with_mention)
+    result = await proc.handle_event_dict(with_mention)
     assert result.outcome is FeishuWebhookOutcome.ACCEPTED
     assert result.message is not None
     assert result.message.bot_mentioned is True
@@ -222,37 +193,34 @@ async def test_processor_group_chat_requires_mention() -> None:
 @pytest.mark.asyncio
 async def test_processor_strips_bot_mention_key_from_text() -> None:
     proc = FeishuWebhookProcessor(
-        verification_token="vt",
         bot_open_id="ou_bot",
         require_mention_in_group=True,
     )
     payload = _text_message_event(
-        token="vt",
         chat_type="group",
         event_id="evt-strip-mention",
         message_id="om_strip",
-        text="@_user_1 你好，这是一条测试内容，你需要回复我“我很好”",
+        text="@_user_1 你好，这是一条测试内容，你需要回复我'我很好'",
         mentions=[{"key": "@_user_1", "id": {"open_id": "ou_bot"}}],
     )
 
-    result = await proc.handle_payload(payload)
+    result = await proc.handle_event_dict(payload)
 
     assert result.outcome is FeishuWebhookOutcome.ACCEPTED
     assert result.message is not None
-    assert result.message.text == "你好，这是一条测试内容，你需要回复我“我很好”"
+    assert result.message.text == "你好，这是一条测试内容，你需要回复我'我很好'"
 
 
 @pytest.mark.asyncio
 async def test_processor_trigger_keyword_filter() -> None:
     proc = FeishuWebhookProcessor(
-        verification_token="vt",
         trigger_keywords={"PPT"},
     )
-    miss = await proc.handle_payload(
-        _text_message_event(token="vt", text="hello", event_id="evt-miss"),
+    miss = await proc.handle_event_dict(
+        _text_message_event(text="hello", event_id="evt-miss"),
     )
-    hit = await proc.handle_payload(
-        _text_message_event(token="vt", text="帮我做一份 ppt", event_id="evt-hit"),
+    hit = await proc.handle_event_dict(
+        _text_message_event(text="帮我做一份 ppt", event_id="evt-hit"),
     )
     assert miss.outcome is FeishuWebhookOutcome.IGNORED
     assert hit.outcome is FeishuWebhookOutcome.ACCEPTED
@@ -260,41 +228,18 @@ async def test_processor_trigger_keyword_filter() -> None:
 
 @pytest.mark.asyncio
 async def test_processor_unknown_event_type_ignored() -> None:
-    proc = FeishuWebhookProcessor(verification_token="vt")
+    proc = FeishuWebhookProcessor()
     payload = {
         "schema": "2.0",
         "header": {
             "event_id": "evt-other",
             "event_type": "im.chat.member_added",
-            "token": "vt",
+            "token": "",
         },
         "event": {},
     }
-    result = await proc.handle_payload(payload)
+    result = await proc.handle_event_dict(payload)
     assert result.outcome is FeishuWebhookOutcome.IGNORED
-
-
-@pytest.mark.asyncio
-async def test_processor_decrypts_encrypted_payload() -> None:
-    cryptography = pytest.importorskip("cryptography")  # noqa: F841
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
-    encrypt_key = "my-encrypt-key"
-    payload = _text_message_event(token="vt", event_id="evt-encrypted")
-    plaintext = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    pad_len = 16 - (len(plaintext) % 16)
-    plaintext += bytes([pad_len]) * pad_len
-    iv = b"0123456789abcdef"
-    key = hashlib.sha256(encrypt_key.encode("utf-8")).digest()
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
-    enc = cipher.encryptor()
-    ciphertext = iv + enc.update(plaintext) + enc.finalize()
-    envelope = {"encrypt": base64.b64encode(ciphertext).decode("ascii")}
-
-    proc = FeishuWebhookProcessor(verification_token="vt", encrypt_key=encrypt_key)
-    result = await proc.handle_payload(envelope)
-    assert result.outcome is FeishuWebhookOutcome.ACCEPTED
-    assert result.message is not None
 
 
 # ── Service ────────────────────────────────────────
@@ -304,7 +249,7 @@ async def test_processor_decrypts_encrypted_payload() -> None:
 async def test_service_creates_task_and_acks() -> None:
     orchestrator, repo = _make_orchestrator()
     fake_client = FakeFeishuClient()
-    proc = FeishuWebhookProcessor(verification_token="vt")
+    proc = FeishuWebhookProcessor()
     service = FeishuWebhookService(
         processor=proc,
         orchestrator=orchestrator,
@@ -312,7 +257,7 @@ async def test_service_creates_task_and_acks() -> None:
         client=fake_client,
     )
 
-    result = await service.handle(_text_message_event(token="vt"))
+    result = await service.handle_event_dict(_text_message_event())
     assert result.outcome is FeishuWebhookOutcome.ACCEPTED
     assert result.handle is not None
     assert result.ack_message_id is not None
@@ -330,7 +275,7 @@ async def test_service_creates_task_and_acks() -> None:
 @pytest.mark.asyncio
 async def test_service_reuses_workspace_for_same_chat() -> None:
     orchestrator, repo = _make_orchestrator()
-    proc = FeishuWebhookProcessor(verification_token="vt")
+    proc = FeishuWebhookProcessor()
     service = FeishuWebhookService(
         processor=proc,
         orchestrator=orchestrator,
@@ -338,29 +283,12 @@ async def test_service_reuses_workspace_for_same_chat() -> None:
         client=None,
     )
 
-    a = await service.handle(_text_message_event(token="vt", event_id="ea"))
-    b = await service.handle(
-        _text_message_event(token="vt", event_id="eb", message_id="om_2"),
+    a = await service.handle_event_dict(_text_message_event(event_id="ea"))
+    b = await service.handle_event_dict(
+        _text_message_event(event_id="eb", message_id="om_2"),
     )
     assert a.handle is not None and b.handle is not None
     assert a.handle.workspace_id == b.handle.workspace_id
-
-
-@pytest.mark.asyncio
-async def test_service_returns_challenge_outcome() -> None:
-    orchestrator, repo = _make_orchestrator()
-    proc = FeishuWebhookProcessor(verification_token="vt")
-    service = FeishuWebhookService(
-        processor=proc,
-        orchestrator=orchestrator,
-        repository=repo,
-        client=None,
-    )
-    result = await service.handle(
-        {"type": "url_verification", "challenge": "abc", "token": "vt"},
-    )
-    assert result.outcome is FeishuWebhookOutcome.CHALLENGE
-    assert result.challenge == "abc"
 
 
 # ── Ingress 注入下的 START_TASK 路径（回归 ack 死代码 bug） ──
@@ -376,7 +304,7 @@ async def test_service_with_ingress_p2p_start_task_acks_and_creates_task() -> No
 
     orchestrator, repo = _make_orchestrator()
     fake_client = FakeFeishuClient()
-    proc = FeishuWebhookProcessor(verification_token="vt")
+    proc = FeishuWebhookProcessor()
     ingress = PilotIngressService()  # 无 pipeline/queries，纯 classify
     service = FeishuWebhookService(
         processor=proc,
@@ -386,9 +314,8 @@ async def test_service_with_ingress_p2p_start_task_acks_and_creates_task() -> No
         ingress=ingress,
     )
 
-    result = await service.handle(
+    result = await service.handle_event_dict(
         _text_message_event(
-            token="vt",
             text="帮我做一份 PPT，主题是季度复盘",
             event_id="evt-p2p-start",
             message_id="om_start_1",
@@ -413,7 +340,6 @@ async def test_service_with_ingress_group_mention_start_task_acks() -> None:
     orchestrator, repo = _make_orchestrator()
     fake_client = FakeFeishuClient()
     proc = FeishuWebhookProcessor(
-        verification_token="vt",
         bot_open_id="ou_bot",
         require_mention_in_group=True,
     )
@@ -426,9 +352,8 @@ async def test_service_with_ingress_group_mention_start_task_acks() -> None:
         ingress=ingress,
     )
 
-    result = await service.handle(
+    result = await service.handle_event_dict(
         _text_message_event(
-            token="vt",
             chat_type="group",
             text="@_user_1 帮我生成一份产品 PPT",
             mentions=[{"key": "@_user_1", "id": {"open_id": "ou_bot"}}],
@@ -445,6 +370,46 @@ async def test_service_with_ingress_group_mention_start_task_acks() -> None:
 
 
 @pytest.mark.asyncio
+async def test_service_with_interaction_group_task_acks_private_delivery_text() -> None:
+    """统一 InteractionService 路径下，群聊任务应先在群里提示后续私发。"""
+    from agent_hub.connectors.feishu.service import GROUP_PRIVATE_ACK_TEXT
+    from agent_hub.pilot.services.interaction import InteractionService
+
+    orchestrator, repo = _make_orchestrator()
+    fake_client = FakeFeishuClient()
+    proc = FeishuWebhookProcessor(
+        bot_open_id="ou_bot",
+        require_mention_in_group=True,
+    )
+    interaction = InteractionService(
+        orchestrator=orchestrator,
+        repository=repo,
+    )
+    service = FeishuWebhookService(
+        processor=proc,
+        orchestrator=orchestrator,
+        repository=repo,
+        client=fake_client,
+        interaction_service=interaction,
+    )
+
+    result = await service.handle_event_dict(
+        _text_message_event(
+            chat_type="group",
+            text="@_user_1 帮我生成一份产品 PPT",
+            mentions=[{"key": "@_user_1", "id": {"open_id": "ou_bot"}}],
+            event_id="evt-grp-interaction",
+            message_id="om_grp_interaction_1",
+        ),
+    )
+
+    assert result.outcome is FeishuWebhookOutcome.ACCEPTED
+    assert result.ack_message_id is not None
+    payload = json.loads(fake_client.sent_messages[0]["content"])
+    assert payload["text"] == GROUP_PRIVATE_ACK_TEXT
+
+
+@pytest.mark.asyncio
 async def test_service_with_ingress_ordinary_qa_does_not_create_task() -> None:
     """ORDINARY_QA / IGNORE 路径不会创建 task，也不应发 ACK。"""
     from agent_hub.pilot.services.ingress import (
@@ -454,7 +419,7 @@ async def test_service_with_ingress_ordinary_qa_does_not_create_task() -> None:
 
     orchestrator, repo = _make_orchestrator()
     fake_client = FakeFeishuClient()
-    proc = FeishuWebhookProcessor(verification_token="vt")
+    proc = FeishuWebhookProcessor()
     ingress = PilotIngressService()  # 没有 pipeline → QA 退化为无 reply_text
     service = FeishuWebhookService(
         processor=proc,
@@ -464,9 +429,8 @@ async def test_service_with_ingress_ordinary_qa_does_not_create_task() -> None:
         ingress=ingress,
     )
 
-    result = await service.handle(
+    result = await service.handle_event_dict(
         _text_message_event(
-            token="vt",
             text="你好啊",
             event_id="evt-qa-1",
             message_id="om_qa_1",
@@ -542,7 +506,7 @@ async def test_service_card_callback_invokes_decide_approval() -> None:
         commands=commands,
     )
 
-    result = await service.handle(_card_action_event())
+    result = await service.handle_event_dict(_card_action_event())
     assert result.outcome is FeishuWebhookOutcome.CARD_CALLBACK
     assert result.approval_decision == {"approval_status": "approved"}
     commands.decide_approval.assert_awaited_once_with(
@@ -570,7 +534,7 @@ async def test_service_card_callback_accepts_p2_event_type() -> None:
         commands=commands,
     )
 
-    result = await service.handle(
+    result = await service.handle_event_dict(
         _card_action_event(event_type="p2.card.action.trigger"),
     )
     assert result.outcome is FeishuWebhookOutcome.CARD_CALLBACK
@@ -594,7 +558,7 @@ async def test_service_card_callback_decide_failure_rejected() -> None:
         commands=commands,
     )
 
-    result = await service.handle(_card_action_event(event_id="evt-card-fail"))
+    result = await service.handle_event_dict(_card_action_event(event_id="evt-card-fail"))
     assert result.outcome is FeishuWebhookOutcome.REJECTED
     assert result.reason is not None
     assert "not found" in result.reason
@@ -745,4 +709,3 @@ async def test_card_callback_no_channel_message_id_skips_update() -> None:
     assert result.outcome is FeishuWebhookOutcome.CARD_CALLBACK
     # 没找到 approval / 没有 channel_message_id → 不调用 update_card
     assert len(fake_client.updated_cards) == 0
-

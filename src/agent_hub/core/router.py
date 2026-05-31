@@ -23,7 +23,7 @@ Example::
         user_context=UserContext(
             user_id="u001", role=UserRole.USER,
         ),
-        source_context=SourceContext(channel="dingtalk", sender_id="u001"),
+        source_context=SourceContext(channel="feishu", sender_id="u001"),
     )
     print(decision.mode, decision.confidence, decision.plan)
 """
@@ -63,7 +63,7 @@ _SYSTEM_PROMPT = """\
    示例："帮我写一个快速排序算法"、"生成一份项目周报"、"写一篇关于AI的文章"
 4. **act** — 工具执行 / 文件处理。用户要求执行具体操作或处理文件。
    示例："帮我算一下 123*456"、"查一下北京今天天气"、"帮我分析这个Excel文件"
-5. **delegate** — 委派给外部 Agent（如 OpenClaw）。需要管理员权限的运维操作。
+5. **delegate** — 委派给外部 Agent。需要管理员权限的运维操作。
    示例："重启测试服务器"、"查看系统日志"、"部署最新版本到生产环境"
 6. **repair** — 反思修复。用户质疑或要求重新考虑之前的结果。
    示例："你刚才的回答不对"、"重新想想"、"能不能换个方案"、"为什么这样做"
@@ -72,7 +72,6 @@ _SYSTEM_PROMPT = """\
 - retrieval：需要检索知识库
 - tool：需要调用工具（计算、API调用等）
 - file_ingest：需要处理上传的文件
-- openclaw：需要调用 OpenClaw 外部系统
 - memory_write：需要写入长期记忆
 ## 安全边界
 - 你只负责判断“建议怎么处理”：mode、capabilities、targets、plan、confidence、reasoning。
@@ -120,7 +119,7 @@ class _LLMRoutingOutput(BaseModel):
     )
     capabilities: list[str] = Field(
         default_factory=list,
-        description="所需能力标签：retrieval, tool, file_ingest, openclaw, memory_write",
+        description="所需能力标签：retrieval, tool, file_ingest, memory_write",
     )
     confidence: float = Field(
         ge=0.0, le=1.0,

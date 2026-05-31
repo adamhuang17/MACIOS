@@ -108,6 +108,25 @@ class PilotRepository:
     async def list_workspaces(self) -> list[Workspace]:
         return await self._snapshots.list_snapshots("workspace")
 
+    async def find_workspace_by_conversation(
+        self, channel: str, conversation_id: str
+    ) -> Workspace | None:
+        """按 (source_channel, source_conversation_id) 查找工作区。
+
+        向后兼容：迁移前仅有 ``feishu_chat_id`` 的旧飞书工作区也纳入匹配。
+        """
+        workspaces = await self.list_workspaces()
+        for ws in workspaces:
+            if (
+                ws.source_channel == channel
+                and ws.source_conversation_id == conversation_id
+            ):
+                return ws
+            # backward compat: Feishu workspaces may only have feishu_chat_id
+            if channel == "feishu" and ws.feishu_chat_id == conversation_id:
+                return ws
+        return None
+
     async def list_tasks(
         self,
         *,

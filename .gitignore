@@ -10,6 +10,7 @@ build/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.tmp/
 *.egg
 .idea/
 .vscode/

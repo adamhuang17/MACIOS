@@ -20,7 +20,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
 
-from agent_hub.api.feishu_routes import build_feishu_router
 from agent_hub.api.pilot_routes import build_pilot_router
 from agent_hub.api.pilot_runtime import PilotRuntime, build_pilot_runtime
 from agent_hub.api.rag_routes import build_rag_router
@@ -95,31 +94,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if _settings.pilot_enabled:
         _pilot_runtime = build_pilot_runtime(_settings, pipeline=_pipeline)
         app.include_router(build_pilot_router(_pilot_runtime))
+        from agent_hub.api.interactions_routes import build_interactions_router
+        app.include_router(build_interactions_router(_pilot_runtime))
         if (
             _settings.feishu_enabled
             and _pilot_runtime.feishu_webhook_service is not None
         ):
             # 长连接模式：主动向飞书建立 WebSocket，无需公网 webhook
-            if (
-                _settings.feishu_use_long_conn
-                and _pilot_runtime.feishu_long_conn is not None
-            ):
+            if _pilot_runtime.feishu_long_conn is not None:
                 await _pilot_runtime.feishu_long_conn.start()
                 logger.info(
                     "feishu_long_conn_started",
                     app_id=_settings.feishu_app_id,
-                )
-            else:
-                # HTTP webhook 模式：挂载路由等待飞书推送
-                app.include_router(
-                    build_feishu_router(
-                        webhook_service=_pilot_runtime.feishu_webhook_service,
-                        callback_path=_settings.feishu_callback_path,
-                    )
-                )
-                logger.info(
-                    "feishu_router_mounted",
-                    callback_path=_settings.feishu_callback_path,
                 )
         # 静态 Dashboard：默认同源挂载 /dashboard，部署时可通过
         # DASHBOARD_STATIC_DIR 指向构建产物目录。

@@ -113,7 +113,7 @@ class TestRouteClassification:
         ("重启测试服务器", ExecutionMode.DELEGATE, False),
         ("哈哈哈今天天气真好", ExecutionMode.IGNORE, False),
         ("你刚才的回答不对，重新想想", ExecutionMode.REPAIR, False),
-        ("帮我写一份项目周报然后发到钉钉群", ExecutionMode.PLAN, True),
+        ("帮我写一份项目周报然后发到飞书群", ExecutionMode.PLAN, True),
         ("搜索一下关于LLM的论文然后总结要点", ExecutionMode.QA, True),
         ("这个文件里有什么内容", ExecutionMode.ACT, False),
     ]
@@ -419,7 +419,7 @@ class TestPlanDecomposition:
             router, "_call_llm", new_callable=AsyncMock, return_value=mock_result,
         ):
             result = await router.route(
-                "帮我写一份项目周报然后发到钉钉群",
+                "帮我写一份项目周报然后发到飞书群",
                 admin_ctx,
                 _TEST_SOURCE,
             )

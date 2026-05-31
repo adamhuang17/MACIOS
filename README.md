@@ -71,9 +71,9 @@ Agent-Hub 可以按两个层次理解：
 
 ### 连接器边界
 
-- 飞书已经接入，但钉钉、QQ、OpenClaw 等其它连接器仍未落地。
+- 飞书已通过 WebSocket 长连接模式接入，无需公网地址。
 - Docker 默认是**本地保底演示模式**：`FEISHU_ENABLED=false`、`PILOT_USE_REAL_CHAIN=false`，保证没有飞书凭据时也能稳定跑通 Dashboard + Pilot。
-- 真实 Drive 分享链路依赖飞书应用凭据、folder token、管理员 open_id 等外部条件；没有这些配置时不要启用 `PILOT_USE_REAL_CHAIN=true`。
+- 真实 Drive 分享链路依赖飞书应用凭据、folder token 和可访问的 Drive URL 模板；文件默认按本次请求人的 open_id 私发/分享，`FEISHU_ADMIN_OPEN_ID` 只作为兜底。
 
 ### 依赖与降级
 
@@ -126,7 +126,7 @@ src/agent_hub/
 ├── api/            # FastAPI 路由、Pilot Runtime、SSE、Dashboard 挂载
 ├── capabilities/   # Claude/OpenClaw 风格 Skill、MCP、Plugin 加载器
 ├── config/         # Settings 与配置管理
-├── connectors/     # 飞书连接器与其它外部接入占位
+├── connectors/     # 飞书 WebSocket 长连接连接器
 ├── core/           # Pipeline、Router、Models、Binding、Risk、PlanValidator、Tracer 等通用内核
 ├── eval/           # 评测器与报告工具
 ├── memory/         # Session / Persistent / Vector Memory
@@ -214,7 +214,9 @@ FEISHU_APP_ID=your_feishu_app_id
 FEISHU_APP_SECRET=your_feishu_app_secret
 FEISHU_BOT_OPEN_ID=ou_xxx
 FEISHU_DEFAULT_FOLDER_TOKEN=folder_xxx
-FEISHU_ADMIN_OPEN_ID=ou_admin_xxx
+FEISHU_DRIVE_URL_TEMPLATE=https://your-tenant.feishu.cn/file/{file_token}
+# 可选兜底；正常会按本次消息发送人的 open_id 私发/分享
+FEISHU_ADMIN_OPEN_ID=
 
 PUBLIC_BASE_URL=https://your-public-host
 CORS_ORIGINS=https://your-public-host
@@ -403,7 +405,9 @@ FEISHU_APP_ID=your_feishu_app_id
 FEISHU_APP_SECRET=your_feishu_app_secret
 FEISHU_BOT_OPEN_ID=ou_xxx
 FEISHU_DEFAULT_FOLDER_TOKEN=folder_xxx
-FEISHU_ADMIN_OPEN_ID=ou_admin_xxx
+FEISHU_DRIVE_URL_TEMPLATE=https://your-tenant.feishu.cn/file/{file_token}
+# 可选兜底；正常会按本次消息发送人的 open_id 私发/分享
+FEISHU_ADMIN_OPEN_ID=
 
 PUBLIC_BASE_URL=https://your-public-host
 CORS_ORIGINS=https://your-public-host
@@ -419,7 +423,7 @@ docker compose up -d --build app
 
 - `PG_DSN` 在容器内要指向 `postgres` service，而不是 `localhost`。
 - 如果改用公网 webhook 模式，请把 `FEISHU_USE_LONG_CONN=false`，并确保外部能访问 `/api/feishu/webhook`。
-- 真实 Drive 分享链路对飞书应用权限、folder token、管理员协作权限都有要求，缺失任一条件都不建议开启 `PILOT_USE_REAL_CHAIN=true`。
+- 真实 Drive 分享链路对飞书应用权限、folder token、Drive URL 模板和请求人 open_id 获取都有要求；`FEISHU_ADMIN_OPEN_ID` 只作为无法识别请求人时的兜底。
 
 ## API 概览
 
@@ -592,7 +596,7 @@ curl -X POST http://127.0.0.1:8080/api/rag/retrieve \
 - `FEISHU_ENABLED=true`
 - 飞书应用凭据完整
 - Drive folder token 可用
-- 管理员协作权限可用
+- 能从飞书入站消息拿到请求人的 open_id，或配置了 `FEISHU_ADMIN_OPEN_ID` 兜底
 - `PUBLIC_BASE_URL` 与回调/分享地址配置正确
 
 缺一个条件，最容易失败的就是 `real.drive.upload_share`。

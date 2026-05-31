@@ -130,8 +130,6 @@ class TestToWebhookDict:
 @pytest.mark.asyncio
 async def test_handle_event_dict_basic() -> None:
     processor = FeishuWebhookProcessor(
-        verification_token="secret",  # 长连接模式不应校验 token
-        encrypt_key="",
         bot_open_id="",
         require_mention_in_group=False,
     )
@@ -154,21 +152,6 @@ async def test_handle_event_dict_dedup() -> None:
     r2 = await processor.handle_event_dict(payload)
     assert r1.outcome is FeishuWebhookOutcome.ACCEPTED
     assert r2.outcome is FeishuWebhookOutcome.DUPLICATE
-
-
-@pytest.mark.asyncio
-async def test_handle_event_dict_skips_verification_token() -> None:
-    """长连接模式下即使 token 为空也不应拒绝请求。"""
-    processor = FeishuWebhookProcessor(
-        verification_token="should_not_be_checked",
-        require_mention_in_group=False,
-    )
-    data = _make_lark_event(chat_type="p2p")
-    payload = _to_webhook_dict(data)
-    assert payload is not None
-    # token="" 在 webhook 模式下会 mismatch，但 handle_event_dict 跳过校验
-    result = await processor.handle_event_dict(payload)
-    assert result.outcome is FeishuWebhookOutcome.ACCEPTED
 
 
 # ── FeishuLongConnClient ──────────────────────────

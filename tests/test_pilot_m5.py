@@ -35,7 +35,6 @@ def test_runtime_gateway_uses_real_chain_skill_mode() -> None:
             pilot_use_real_gateway=False,
             pilot_use_real_chain=True,
             feishu_enabled=False,
-            feishu_use_long_conn=False,
         ),
     )
     try:
@@ -111,6 +110,81 @@ async def test_template_gateway_deck_full_real_chain_uses_real_skills() -> None:
     assert by_kind[PlanStepKind.RENDER_SLIDES] == "real.slide.render_pptx"
     assert by_kind[PlanStepKind.UPLOAD] == "real.drive.upload_share"
     assert by_kind[PlanStepKind.SUMMARIZE] == "feishu.im.send_message"
+
+
+@pytest.mark.asyncio
+async def test_template_gateway_feishu_tasks_private_deliver_to_requester() -> None:
+    gw = TemplatePlanGateway(skill_mode="real_chain")
+    bp = await gw.complex_plan(
+        PlanContext(
+            raw_text="做一份 PPT",
+            requester_id="ou_requester",
+            title="季度复盘",
+            source_channel="feishu",
+            source_conversation_id="oc_group",
+            metadata={
+                "feishu_private_receive_id": "ou_requester",
+                "feishu_private_receive_id_type": "open_id",
+                "feishu_requester_open_id": "ou_requester",
+            },
+        ),
+    )
+
+    by_kind = {s.kind: s for s in bp.steps}
+    assert by_kind[PlanStepKind.READ_CONTEXT].skill_name == "feishu.im.fetch_recent"
+    assert by_kind[PlanStepKind.READ_CONTEXT].input_params["chat_id"] == "oc_group"
+    assert by_kind[PlanStepKind.UPLOAD].input_params["member_open_id"] == "ou_requester"
+    summary_params = by_kind[PlanStepKind.SUMMARIZE].input_params
+    assert summary_params["chat_id"] == "ou_requester"
+    assert summary_params["receive_id_type"] == "open_id"
+
+
+@pytest.mark.asyncio
+async def test_template_gateway_feishu_private_file_uses_private_folder() -> None:
+    gw = TemplatePlanGateway(skill_mode="real_chain")
+    bp = await gw.complex_plan(
+        PlanContext(
+            raw_text="帮我写一份私人方案文档",
+            requester_id="ou_leader",
+            title="私人方案",
+            source_channel="feishu",
+            source_conversation_id="oc_p2p",
+            metadata={
+                "feishu_requester_open_id": "ou_leader",
+                "feishu_private_folder_token": "folder-private-leader",
+            },
+        ),
+    )
+
+    upload = next(s for s in bp.steps if s.kind == PlanStepKind.UPLOAD)
+    assert upload.input_params["folder_token"] == "folder-private-leader"
+    assert upload.input_params["member_open_id"] == "ou_leader"
+    assert "share_recipient_open_ids" not in upload.input_params
+
+
+@pytest.mark.asyncio
+async def test_template_gateway_feishu_shared_file_uses_shared_folder_and_recipients() -> None:
+    gw = TemplatePlanGateway(skill_mode="real_chain")
+    bp = await gw.complex_plan(
+        PlanContext(
+            raw_text="把选中的群消息生成共享文件",
+            requester_id="ou_5f91fff5b8c696e875817ad56d745441",
+            title="共享文件",
+            source_channel="feishu",
+            source_conversation_id="oc_group",
+            metadata={
+                "feishu_requester_open_id": "ou_5f91fff5b8c696e875817ad56d745441",
+                "feishu_file_visibility": "shared",
+                "feishu_shared_folder_token": "folder-shared-leader",
+                "feishu_share_recipient_open_ids": "ou_sub_1,ou_sub_2",
+            },
+        ),
+    )
+
+    upload = next(s for s in bp.steps if s.kind == PlanStepKind.UPLOAD)
+    assert upload.input_params["folder_token"] == "folder-shared-leader"
+    assert upload.input_params["member_open_id"] == "ou_5f91fff5b8c696e875817ad56d745441"
+    assert upload.input_params["share_recipient_open_ids"] == ["ou_sub_1", "ou_sub_2"]
 
 
 @pytest.mark.asyncio

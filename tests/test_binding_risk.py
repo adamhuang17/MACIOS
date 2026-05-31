@@ -47,7 +47,7 @@ def test_risk_policy_does_not_let_user_escalate_to_admin() -> None:
         mode=ExecutionMode.DELEGATE,
         confidence=0.9,
         reasoning="ops request",
-        capabilities=["openclaw"],
+        capabilities=["admin"],
     )
     decision = RiskPolicy().assess(
         user_context=UserContext(user_id="u1", role=UserRole.USER),

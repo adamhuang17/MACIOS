@@ -38,6 +38,7 @@ from agent_hub.pilot.services.commands import PilotCommandService
 from agent_hub.pilot.services.event_publisher import PilotEventPublisher
 from agent_hub.pilot.services.execution import ExecutionEngine
 from agent_hub.pilot.services.ingress import PilotIngressService
+from agent_hub.pilot.services.interaction import InteractionService
 from agent_hub.pilot.services.model_gateway import (
     ModelGateway,
     OpenAIModelGateway,
@@ -85,6 +86,7 @@ class PilotRuntime:
     commands: PilotCommandService
     brief_generator: BriefGenerator
     ingress: PilotIngressService
+    interaction_service: InteractionService
     feishu_client: FeishuClientProtocol | None = None
     feishu_webhook_service: FeishuWebhookService | None = None
     feishu_long_conn: FeishuLongConnClient | None = None
@@ -197,6 +199,12 @@ def build_pilot_runtime(
         queries=queries,
         repository_lookup=_lookup_workspace_by_chat,
     )
+    interaction_service = InteractionService(
+        pipeline=pipeline,
+        queries=queries,
+        orchestrator=orchestrator,
+        repository=repo,
+    )
 
     feishu_client, feishu_webhook_service, feishu_long_conn = _maybe_build_feishu(
         settings,
@@ -206,6 +214,7 @@ def build_pilot_runtime(
         repository=repo,
         commands=commands,
         ingress=ingress,
+        interaction_service=interaction_service,
     )
     if feishu_client is not None:
         notifier = FeishuApprovalNotifier(repo, feishu_client)
@@ -256,6 +265,7 @@ def build_pilot_runtime(
         commands=commands,
         brief_generator=brief_generator,
         ingress=ingress,
+        interaction_service=interaction_service,
         feishu_client=feishu_client,
         feishu_webhook_service=feishu_webhook_service,
         feishu_long_conn=feishu_long_conn,
@@ -272,6 +282,7 @@ def _maybe_build_feishu(
     repository: PilotRepository,
     commands: PilotCommandService | None = None,
     ingress: PilotIngressService | None = None,
+    interaction_service: InteractionService | None = None,
 ) -> tuple[FeishuClientProtocol | None, FeishuWebhookService | None, FeishuLongConnClient | None]:
     """根据配置可选地装配飞书连接器。
 
@@ -304,8 +315,6 @@ def _maybe_build_feishu(
     # M5：审批卡片技能（独立 scope，避免与 register_feishu_skills 冲突）
     register_feishu_card_skills(registry, client, allow_overwrite=False)
     processor = FeishuWebhookProcessor(
-        verification_token=settings.feishu_verification_token,
-        encrypt_key=settings.feishu_encrypt_key,
         bot_open_id=settings.feishu_bot_open_id,
         ignore_self_messages=settings.feishu_ignore_self_messages,
         require_mention_in_group=settings.feishu_require_mention_in_group,
@@ -320,19 +329,15 @@ def _maybe_build_feishu(
         client=client,
         commands=commands,
         ingress=ingress,
+        interaction_service=interaction_service,
     )
     # 长连接模式：主动连接飞书 WebSocket 服务器，无需公网地址
-    long_conn: FeishuLongConnClient | None = None
-    if settings.feishu_use_long_conn:
-        long_conn = FeishuLongConnClient(
-            app_id=settings.feishu_app_id,
-            app_secret=settings.feishu_app_secret,
-            webhook_service=webhook_service,
-        )
-        logger.info("feishu.runtime.long_conn_enabled", app_id=settings.feishu_app_id)
-    else:
-        logger.info("feishu.runtime.webhook_mode", app_id=settings.feishu_app_id)
-    logger.info("feishu.runtime.ready", app_id=settings.feishu_app_id)
+    long_conn = FeishuLongConnClient(
+        app_id=settings.feishu_app_id,
+        app_secret=settings.feishu_app_secret,
+        webhook_service=webhook_service,
+    )
+    logger.info("feishu.runtime.long_conn_enabled", app_id=settings.feishu_app_id)
     return client, webhook_service, long_conn
 
 

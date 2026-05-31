@@ -150,6 +150,7 @@ class FeishuClientProtocol(Protocol):
         member_open_id: str,
         perm: str = "edit",
         need_notification: bool = True,
+        file_type: str = "file",
     ) -> None: ...
 
     async def aclose(self) -> None: ...
@@ -274,6 +275,7 @@ class FakeFeishuClient:
         member_open_id: str,
         perm: str = "edit",
         need_notification: bool = True,
+        file_type: str = "file",
     ) -> None:
         self.shared_files.append(
             {
@@ -281,6 +283,7 @@ class FakeFeishuClient:
                 "member_open_id": member_open_id,
                 "perm": perm,
                 "need_notification": need_notification,
+                "file_type": file_type,
             }
         )
 
@@ -489,8 +492,9 @@ class FeishuClient:
         member_open_id: str,
         perm: str = "edit",
         need_notification: bool = True,
+        file_type: str = "file",
     ) -> None:
-        """为已上传的云空间文件添加协作者权限。
+        """为 Drive 资源添加协作者权限。
 
         ``need_notification=True`` 时飞书会主动给 ``member_open_id`` 发一条
         包含可点击链接的“与我共享”通知，这是机器人让用户拿到文件链接
@@ -500,7 +504,7 @@ class FeishuClient:
             "POST",
             f"/open-apis/drive/v1/permissions/{file_token}/members",
             params={
-                "type": "file",
+                "type": file_type,
                 "need_notification": "true" if need_notification else "false",
             },
             json_body={

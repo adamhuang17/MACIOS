@@ -153,12 +153,15 @@ class FeishuProgressNotifier:
             return
 
         task = await self._repo.get_task(event.task_id or "")
+        receive_id, receive_id_type = _resolve_receive_target(workspace, task)
+        if not receive_id:
+            return
         title = task.origin_text[:48] if task is not None else event.task_id or "任务"
         text = _format_progress_text(event, title)
         try:
             await self._client.send_message(
-                receive_id=workspace.feishu_chat_id,
-                receive_id_type="chat_id",
+                receive_id=receive_id,
+                receive_id_type=receive_id_type,
                 msg_type="text",
                 content=json.dumps({"text": text}, ensure_ascii=False),
             )
@@ -220,6 +223,19 @@ def _phase_label(phase: str) -> str:
         "failed": "失败",
         "completed": "完成",
     }.get(phase, phase or "进度更新")
+
+
+def _resolve_receive_target(workspace, task) -> tuple[str, str]:  # noqa: ANN001
+    if task is not None:
+        metadata = dict(task.metadata or {})
+        if metadata.get("feishu_delivery_mode") == "private":
+            receive_id = str(metadata.get("feishu_private_receive_id") or "").strip()
+            receive_id_type = str(
+                metadata.get("feishu_private_receive_id_type") or "open_id"
+            ).strip() or "open_id"
+            if receive_id:
+                return receive_id, receive_id_type
+    return workspace.feishu_chat_id or "", "chat_id"
 
 
 __all__ = ["FeishuProgressNotifier"]

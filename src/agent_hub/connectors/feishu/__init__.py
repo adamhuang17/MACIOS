@@ -1,13 +1,13 @@
-"""Feishu / Lark connector（M4）。
+"""Feishu / Lark connector（M4）— 仅 WebSocket 长连接模式。
 
 只承担与飞书开放平台之间的边界：
 
 - :mod:`auth`     —— tenant_access_token 缓存与刷新；
 - :mod:`client`   —— im/drive/docs HTTP 客户端 + 单元测试用 Fake；
-- :mod:`webhook`  —— URL verification、加密解包、event_id 去重、消息规范化；
+- :mod:`webhook`  —— event_id 去重、消息规范化、过滤；
 - :mod:`models`   —— 严格内部 DTO，不直接外泄飞书原始 payload；
 - :mod:`service`  —— 把规范化消息转成 :class:`TaskRequest` 提交给 ``TaskOrchestrator``。
-- :mod:`longconn` —— WebSocket 长连接客户端（无公网地址时替代 webhook）。
+- :mod:`longconn` —— WebSocket 长连接客户端（无需公网地址）。
 
 connector 不直接读写 Pilot 实体或事件存储；所有业务副作用通过
 ``TaskOrchestrator`` / ``SkillRegistry`` 落地。
@@ -36,6 +36,7 @@ from agent_hub.connectors.feishu.progress_notifier import FeishuProgressNotifier
 from agent_hub.connectors.feishu.service import (
     FeishuAckResult,
     FeishuWebhookService,
+    GROUP_PRIVATE_ACK_TEXT,
 )
 from agent_hub.connectors.feishu.webhook import (
     FeishuWebhookError,
@@ -66,4 +67,5 @@ __all__ = [
     "FeishuWebhookProcessor",
     "FeishuWebhookResult",
     "FeishuWebhookService",
+    "GROUP_PRIVATE_ACK_TEXT",
 ]

@@ -48,6 +48,10 @@ class FeishuApprovalNotifier:
             )
             return
 
+        receive_id, receive_id_type = _resolve_receive_target(workspace, task)
+        if not receive_id:
+            return
+
         title, summary, detail = await self._build_card_content(approval, task)
         card = build_approval_card(
             approval_id=approval.approval_id,
@@ -56,8 +60,8 @@ class FeishuApprovalNotifier:
             detail=detail,
         )
         sent = await self._client.send_interactive_card(
-            receive_id=workspace.feishu_chat_id,
-            receive_id_type="chat_id",
+            receive_id=receive_id,
+            receive_id_type=receive_id_type,
             card=card,
         )
 
@@ -78,7 +82,7 @@ class FeishuApprovalNotifier:
             logger.info(
                 "feishu.approval_card_sent",
                 approval_id=approval.approval_id,
-                chat_id=workspace.feishu_chat_id,
+                chat_id=receive_id,
                 message_id=sent.message_id,
             )
 
@@ -117,6 +121,18 @@ class FeishuApprovalNotifier:
             f"plan_id: {approval.target_id}"
         )
         return "计划审批"[:60], summary, detail
+
+
+def _resolve_receive_target(workspace, task: Task) -> tuple[str, str]:  # noqa: ANN001
+    metadata = dict(task.metadata or {})
+    if metadata.get("feishu_delivery_mode") == "private":
+        receive_id = str(metadata.get("feishu_private_receive_id") or "").strip()
+        receive_id_type = str(
+            metadata.get("feishu_private_receive_id_type") or "open_id"
+        ).strip() or "open_id"
+        if receive_id:
+            return receive_id, receive_id_type
+    return workspace.feishu_chat_id or "", "chat_id"
 
 
 __all__ = ["FeishuApprovalNotifier"]
