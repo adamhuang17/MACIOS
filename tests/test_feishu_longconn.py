@@ -316,6 +316,60 @@ async def test_event_dispatched_to_service() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_in_thread_restarts_when_ws_client_exits() -> None:
+    """SDK 长连接 start() 异常返回后，应用层应创建新的 ws client 兜底重连。"""
+    svc = AsyncMock()
+    svc.handle_event_dict = AsyncMock(return_value=MagicMock())
+    client = FeishuLongConnClient(
+        app_id="app-1", app_secret="secret", webhook_service=svc
+    )
+
+    lark_mod = _make_mock_lark_module()
+    first_ws = MagicMock()
+    first_ws.start = MagicMock(return_value=None)
+    first_ws.stop = MagicMock()
+    second_ws = MagicMock()
+    second_started = threading.Event()
+
+    def _second_start() -> None:
+        second_started.set()
+        client._stop_event.wait(timeout=0.5)
+
+    second_ws.start = MagicMock(side_effect=_second_start)
+    second_ws.stop = MagicMock()
+    lark_mod.ws.Client = MagicMock(side_effect=[first_ws, second_ws])
+
+    loop = asyncio.get_event_loop()
+    with patch.dict("sys.modules", _mock_lark_modules(lark_mod)), \
+         patch.object(
+             FeishuLongConnClient,
+             "_reconnect_initial_delay_seconds",
+             0.01,
+             create=True,
+         ), \
+         patch.object(
+             FeishuLongConnClient,
+             "_reconnect_max_delay_seconds",
+             0.01,
+             create=True,
+         ):
+        t = threading.Thread(
+            target=client._run_in_thread, args=(loop,), daemon=True
+        )
+        t.start()
+        for _ in range(50):
+            await asyncio.sleep(0.02)
+            if second_started.is_set():
+                break
+        client._stop_event.set()
+        t.join(timeout=2)
+
+    assert lark_mod.ws.Client.call_count == 2
+    first_ws.start.assert_called_once()
+    second_ws.start.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_im_event_handler_does_not_block_on_slow_service() -> None:
     """IM 事件只投递到主循环，不等待长耗时任务完成。"""
     svc = AsyncMock()

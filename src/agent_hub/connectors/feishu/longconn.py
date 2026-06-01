@@ -200,6 +200,9 @@ class FeishuLongConnClient:
     处理，与 HTTP webhook 共用同一套去重 / 规范化 / 过滤 / 任务提交逻辑。
     """
 
+    _reconnect_initial_delay_seconds = 1.0
+    _reconnect_max_delay_seconds = 30.0
+
     def __init__(
         self,
         *,
@@ -380,19 +383,49 @@ class FeishuLongConnClient:
             .register_p2_card_action_trigger(_handle_card_action)
             .build()
         )
-        ws_client = lark.ws.Client(
-            self._app_id,
-            self._app_secret,
-            event_handler=event_handler,
-        )
-        self._ws_client = ws_client
-        try:
-            ws_client.start()
-        except Exception as exc:  # noqa: BLE001
-            if not self._stop_event.is_set():
-                logger.error("feishu.longconn.client_error", error=str(exc))
-        finally:
-            self._ws_client = None
+        reconnect_attempt = 0
+        while not self._stop_event.is_set():
+            ws_client: Any = None
+            try:
+                ws_client = lark.ws.Client(
+                    self._app_id,
+                    self._app_secret,
+                    event_handler=event_handler,
+                )
+                self._ws_client = ws_client
+                if reconnect_attempt:
+                    logger.info(
+                        "feishu.longconn.reconnecting",
+                        attempt=reconnect_attempt,
+                    )
+                ws_client.start()
+                if self._stop_event.is_set():
+                    break
+                logger.warning(
+                    "feishu.longconn.client_exited",
+                    attempt=reconnect_attempt,
+                )
+            except Exception as exc:  # noqa: BLE001
+                if self._stop_event.is_set():
+                    break
+                logger.error(
+                    "feishu.longconn.client_error",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    attempt=reconnect_attempt,
+                )
+            finally:
+                if self._ws_client is ws_client:
+                    self._ws_client = None
+
+            reconnect_attempt += 1
+            delay = min(
+                self._reconnect_max_delay_seconds,
+                self._reconnect_initial_delay_seconds
+                * (2 ** min(reconnect_attempt - 1, 5)),
+            )
+            if self._stop_event.wait(delay):
+                break
 
 
 def _build_card_toast_response(

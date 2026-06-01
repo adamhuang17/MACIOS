@@ -187,6 +187,7 @@ class ExecutionEngine:
             )
             raise ValueError(msg)
         running_task = transition(task, TaskAction.UNBLOCK)
+        running_task = self._clear_pause_metadata(running_task)
         await self._repo.save(running_task)
         await self._emit_task_status(running_task)
         await self._progress.emit(
@@ -288,19 +289,25 @@ class ExecutionEngine:
             running_task, plan,
         )
 
+        latest_task = await self._repo.get_task(running_task.task_id) or running_task
         # 整理最终 task 状态
         if any_failed:
-            final_task = transition(running_task, TaskAction.FAIL, patch={
+            final_task = transition(latest_task, TaskAction.FAIL, patch={
                 "error": "one or more steps failed",
             })
             final_message = "任务失败，请查看失败步骤"
             final_phase = "failed"
         elif any_blocked:
-            final_task = transition(running_task, TaskAction.BLOCK)
-            final_message = "任务暂停，等待审批或恢复"
-            final_phase = "blocked"
+            pause_requested = self._pause_requested(latest_task)
+            final_task = self._block_task(latest_task, paused=pause_requested)
+            final_message = (
+                "任务已暂停，等待恢复"
+                if pause_requested
+                else "任务暂停，等待审批或恢复"
+            )
+            final_phase = "paused" if pause_requested else "blocked"
         else:
-            final_task = transition(running_task, TaskAction.SUCCEED, patch={
+            final_task = transition(latest_task, TaskAction.SUCCEED, patch={
                 "final_summary": f"{len(executions)} steps succeeded",
             })
             final_message = "任务已完成，成果已生成"
@@ -347,6 +354,10 @@ class ExecutionEngine:
             # business state transitions; emitting several of them at once would
             # make the Feishu approval flow harder to explain and recover.
             for step in layer:
+                latest_task = await self._repo.get_task(running_task.task_id)
+                if latest_task is not None and self._pause_requested(latest_task):
+                    any_blocked = True
+                    break
                 latest = await self._repo.get_step(step.step_id) or step
                 # 跳过终态（成功/已跳过/已取消）
                 if latest.status in (
@@ -719,6 +730,46 @@ class ExecutionEngine:
             "dry_run_result": None,
             "started_at": None,
             "finished_at": None,
+        })
+
+    @staticmethod
+    def _pause_requested(task: Task) -> bool:
+        return bool(
+            task.metadata.get("pause_requested_at")
+            and not task.metadata.get("paused_at")
+        )
+
+    @staticmethod
+    def _clear_pause_metadata(task: Task) -> Task:
+        metadata = dict(task.metadata)
+        changed = False
+        for key in (
+            "pause_requested",
+            "pause_requested_at",
+            "pause_requested_by",
+            "paused_at",
+            "paused_by",
+        ):
+            if key in metadata:
+                metadata.pop(key, None)
+                changed = True
+        if not changed:
+            return task
+        return task.model_copy(update={"metadata": metadata})
+
+    @staticmethod
+    def _block_task(task: Task, *, paused: bool) -> Task:
+        if not paused:
+            return transition(task, TaskAction.BLOCK)
+        now = datetime.now(UTC)
+        metadata = dict(task.metadata)
+        metadata.update({
+            "pause_requested": False,
+            "paused_at": now.isoformat(),
+            "paused_by": metadata.get("pause_requested_by"),
+        })
+        return transition(task, TaskAction.BLOCK, now=now, patch={
+            "metadata": metadata,
         })
 
     async def _emit_task_status(self, task: Task) -> None:

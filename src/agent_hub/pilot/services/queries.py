@@ -31,6 +31,10 @@ if TYPE_CHECKING:
     from agent_hub.pilot.services.repository import PilotRepository
 
 
+def _is_deleted_task(task: Task) -> bool:
+    return bool(task.metadata.get("deleted_at"))
+
+
 class TaskSummary(BaseModel):
     """Dashboard 列表行。"""
 
@@ -89,6 +93,7 @@ class PilotQueryService:
         out: list[WorkspaceSummary] = []
         for ws in await self._repo.list_workspaces():
             tasks = await self._repo.list_tasks(workspace_id=ws.workspace_id)
+            tasks = [t for t in tasks if not _is_deleted_task(t)]
             latest_seq = await self._latest_sequence(ws.workspace_id)
             out.append(WorkspaceSummary(
                 workspace=ws,
@@ -108,6 +113,7 @@ class PilotQueryService:
         limit: int = 50,
     ) -> list[TaskSummary]:
         tasks = await self._repo.list_tasks(workspace_id=workspace_id)
+        tasks = [t for t in tasks if not _is_deleted_task(t)]
         if status is not None:
             tasks = [t for t in tasks if t.status == status]
         tasks.sort(key=lambda t: t.updated_at, reverse=True)
@@ -154,7 +160,7 @@ class PilotQueryService:
         recent_event_limit: int = 50,
     ) -> TaskDetail | None:
         task = await self._repo.get_task(task_id)
-        if task is None:
+        if task is None or _is_deleted_task(task):
             return None
         ws = await self._repo.get_workspace(task.workspace_id)
         if ws is None:
@@ -223,6 +229,8 @@ class PilotQueryService:
 
     async def get_workspace_id_for_task(self, task_id: str) -> str | None:
         task = await self._repo.get_task(task_id)
+        if task is not None and _is_deleted_task(task):
+            return None
         return task.workspace_id if task is not None else None
 
     # ── helpers ────────────────────────────────────
@@ -242,6 +250,19 @@ class PilotQueryService:
         steps: list[PlanStep],
     ) -> list[dict[str, Any]]:
         actions: list[dict[str, Any]] = []
+        can_delete = task.status not in (
+            TaskStatus.PLANNING,
+            TaskStatus.APPROVED,
+            TaskStatus.RUNNING,
+        )
+        if task.status == TaskStatus.RUNNING and not task.metadata.get(
+            "pause_requested_at",
+        ):
+            actions.append({
+                "type": "pause_task",
+                "task_id": task.task_id,
+                "label": "暂停任务",
+            })
         if task.status == TaskStatus.AWAITING_APPROVAL and plan is not None:
             for a in approvals:
                 if (
@@ -285,11 +306,13 @@ class PilotQueryService:
                     )
                     for s in steps
                 )
-                if has_approved and has_runnable_remainder:
+                if task.metadata.get("paused_at") or (
+                    has_approved and has_runnable_remainder
+                ):
                     actions.append({
                         "type": "resume_task",
                         "task_id": task.task_id,
-                        "label": "继续执行",
+                        "label": "恢复任务",
                     })
         if task.status in (TaskStatus.FAILED, TaskStatus.RETRYABLE_FAILED):
             actions.append({"type": "retry_task", "label": "重试"})
@@ -307,6 +330,12 @@ class PilotQueryService:
                     "skill_name": s.skill_name,
                     "label": "恢复",
                 })
+        if can_delete:
+            actions.append({
+                "type": "delete_task",
+                "task_id": task.task_id,
+                "label": "删除任务",
+            })
         return actions
 
 
