@@ -16,6 +16,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from agent_hub.core.openai_compat import provider_extra_body
 from agent_hub.pilot.domain.enums import PlanStepKind, RiskLevel
 from agent_hub.pilot.services.dto import (
     PlanBlueprint,
@@ -719,6 +720,7 @@ class OpenAIModelGateway:
                 },
             ],
             response_format={"type": "json_object"},
+            extra_body=provider_extra_body(self._base_url, self._model) or None,
             timeout=self._timeout,
         )
         content = response.choices[0].message.content or ""

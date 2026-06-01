@@ -311,6 +311,7 @@ def _maybe_build_feishu(
         client,
         artifact_reader=artifact_reader,
         default_folder_token=settings.feishu_default_folder_token,
+        default_receive_open_id=settings.feishu_admin_open_id,
     )
     # M5：审批卡片技能（独立 scope，避免与 register_feishu_skills 冲突）
     register_feishu_card_skills(registry, client, allow_overwrite=False)

@@ -321,6 +321,126 @@ def test_resume_endpoint_unknown_task_returns_404(client: TestClient) -> None:
 # ── 工件 ────────────────────────────────────────────
 
 
+def test_recover_step_endpoint_resumes_same_task(client: TestClient) -> None:
+    import asyncio
+
+    from agent_hub.pilot import (
+        Plan,
+        PlanStatus,
+        PlanStep,
+        PlanStepKind,
+        Task,
+        TaskAction,
+        TaskStatus,
+        Workspace,
+        WorkspaceStatus,
+        transition,
+    )
+    from agent_hub.pilot.skills.registry import (
+        SkillInvocation,
+        SkillResult,
+        SkillSpec,
+    )
+
+    runtime = client.app.state.runtime
+    calls = {"flaky": 0}
+
+    async def ok(inv: SkillInvocation) -> SkillResult:
+        return SkillResult(skill_name=inv.skill_name, success=True)
+
+    async def flaky(inv: SkillInvocation) -> SkillResult:
+        calls["flaky"] += 1
+        if calls["flaky"] == 1:
+            return SkillResult(
+                skill_name=inv.skill_name,
+                success=False,
+                error="temporary failure",
+            )
+        return SkillResult(skill_name=inv.skill_name, success=True)
+
+    runtime.registry.register(SkillSpec(
+        skill_name="api.recover.ok",
+        supports_dry_run=False,
+    ), ok)
+    runtime.registry.register(SkillSpec(
+        skill_name="api.recover.flaky",
+        supports_dry_run=False,
+    ), flaky)
+
+    async def _seed_failed_task() -> tuple[str, str]:
+        ws = Workspace(
+            title="api recover",
+            source_channel="api",
+            created_by="tester-1",
+            status=WorkspaceStatus.ACTIVE,
+        )
+        task = Task(
+            workspace_id=ws.workspace_id,
+            origin_text="recover this task",
+            requester_id="tester-1",
+        )
+        plan = Plan(
+            workspace_id=ws.workspace_id,
+            task_id=task.task_id,
+            goal="recover failed step",
+            status=PlanStatus.APPROVED,
+        )
+        first = PlanStep(
+            workspace_id=ws.workspace_id,
+            task_id=task.task_id,
+            plan_id=plan.plan_id,
+            index=0,
+            title="first",
+            kind=PlanStepKind.READ_CONTEXT,
+            skill_name="api.recover.ok",
+        )
+        failed = PlanStep(
+            workspace_id=ws.workspace_id,
+            task_id=task.task_id,
+            plan_id=plan.plan_id,
+            index=1,
+            title="flaky",
+            kind=PlanStepKind.SUMMARIZE,
+            skill_name="api.recover.flaky",
+            depends_on=[first.step_id],
+        )
+        plan = plan.model_copy(update={
+            "step_ids": [first.step_id, failed.step_id],
+        })
+        task = task.model_copy(update={"plan_id": plan.plan_id})
+        task = transition(task, TaskAction.START_PLANNING)
+        task = transition(task, TaskAction.REQUEST_APPROVAL)
+        task = transition(task, TaskAction.APPROVE)
+
+        await runtime.repository.save(ws, expected_version=None)
+        await runtime.repository.save(task, expected_version=None)
+        await runtime.repository.save(plan, expected_version=None)
+        await runtime.repository.save(first, expected_version=None)
+        await runtime.repository.save(failed, expected_version=None)
+
+        first_run = await runtime.execution.run_plan(task, plan)
+        assert first_run.final_status == TaskStatus.FAILED
+        return task.task_id, failed.step_id
+
+    task_id, failed_step_id = asyncio.new_event_loop().run_until_complete(
+        _seed_failed_task(),
+    )
+
+    detail = client.get(f"/api/pilot/tasks/{task_id}").json()
+    action_types = {a["type"] for a in detail["available_actions"]}
+    assert {"retry_task", "recover_from"} <= action_types
+
+    resp = client.post(
+        f"/api/pilot/tasks/{task_id}/steps/{failed_step_id}/recover",
+        json={"requester_id": "tester-1"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["task_id"] == task_id
+    assert body["task_status"] == "succeeded"
+    assert calls["flaky"] == 2
+
+
 def test_unknown_artifact_returns_404(client: TestClient) -> None:
     assert client.get("/api/pilot/artifacts/missing").status_code == 404
 

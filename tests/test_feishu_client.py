@@ -139,6 +139,40 @@ async def test_client_business_error_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_client_upload_file_http_error_preserves_feishu_payload() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/open-apis/drive/v1/files/upload_all")
+        return httpx.Response(
+            400,
+            json={
+                "code": 1062501,
+                "msg": "parent_node has no permission",
+                "error": {"log_id": "20260531120000ABC"},
+            },
+            headers={"X-Tt-Logid": "log-123"},
+        )
+
+    client, _ = _build_client(handler)
+    with pytest.raises(FeishuApiError) as ctx:
+        await client.upload_file(
+            file_name="deck.pptx",
+            content=b"pptx",
+            parent_node="fld_no_access",
+        )
+
+    err = ctx.value
+    assert err.code == 1062501
+    assert err.message == "parent_node has no permission"
+    assert err.http_status == 400
+    assert err.endpoint.endswith("/open-apis/drive/v1/files/upload_all")
+    assert err.details["response"]["error"]["log_id"] == "20260531120000ABC"
+    assert err.details["request"]["parent_node"] == "fld_no_access"
+    assert err.request_id == "log-123"
+    assert "parent_node has no permission" in str(err)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_client_unauthorized_invalidates_token() -> None:
     refresh_count = 0
 

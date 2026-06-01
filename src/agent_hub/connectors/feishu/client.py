@@ -34,10 +34,102 @@ class FeishuApiError(RuntimeError):
     ``code = -1``。
     """
 
-    def __init__(self, code: int, message: str) -> None:
-        super().__init__(f"feishu api error: code={code} msg={message}")
+    def __init__(
+        self,
+        code: int,
+        message: str,
+        *,
+        http_status: int | None = None,
+        endpoint: str | None = None,
+        request_id: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        parts = [f"feishu api error: code={code}", f"msg={message}"]
+        if http_status is not None:
+            parts.append(f"http_status={http_status}")
+        if endpoint:
+            parts.append(f"endpoint={endpoint}")
+        if request_id:
+            parts.append(f"request_id={request_id}")
+        super().__init__(" ".join(parts))
         self.code = code
         self.message = message
+        self.http_status = http_status
+        self.endpoint = endpoint
+        self.request_id = request_id
+        self.details = details or {}
+
+    def to_error_details(self) -> dict[str, Any]:
+        """Return a structured, UI-safe diagnostic payload."""
+        return {
+            "provider": "feishu",
+            "code": self.code,
+            "message": self.message,
+            "http_status": self.http_status,
+            "endpoint": self.endpoint,
+            "request_id": self.request_id,
+            "details": self.details,
+        }
+
+
+def _truncate_text(value: str, limit: int = 1200) -> str:
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}...<truncated>"
+
+
+def _safe_response_payload(resp: httpx.Response) -> dict[str, Any]:
+    try:
+        payload = resp.json()
+    except ValueError:
+        return {"text": _truncate_text(resp.text)}
+    if isinstance(payload, dict):
+        return payload
+    return {"payload": payload}
+
+
+def _request_id_from_response(resp: httpx.Response, payload: dict[str, Any]) -> str | None:
+    for header in ("X-Tt-Logid", "X-Request-Id", "X-Request-ID"):
+        value = resp.headers.get(header)
+        if value:
+            return value
+    error = payload.get("error")
+    if isinstance(error, dict):
+        for key in ("log_id", "request_id", "troubleshooter"):
+            value = error.get(key)
+            if value:
+                return str(value)
+    return None
+
+
+def _feishu_error_from_response(
+    resp: httpx.Response,
+    *,
+    endpoint: str,
+    request: dict[str, Any] | None = None,
+    default_message: str | None = None,
+) -> FeishuApiError:
+    payload = _safe_response_payload(resp)
+    raw_code = payload.get("code", resp.status_code)
+    try:
+        code = int(raw_code)
+    except (TypeError, ValueError):
+        code = resp.status_code
+    message = str(payload.get("msg") or default_message or f"http {resp.status_code}")
+    request_id = _request_id_from_response(resp, payload)
+    details: dict[str, Any] = {
+        "response": payload,
+    }
+    if request is not None:
+        details["request"] = request
+    return FeishuApiError(
+        code,
+        message,
+        http_status=resp.status_code,
+        endpoint=endpoint,
+        request_id=request_id,
+        details=details,
+    )
 
 
 # ── 返回 DTO ────────────────────────────────────────
@@ -370,13 +462,27 @@ class FeishuClient:
                 headers=await self._headers(),
             )
         except httpx.HTTPError as exc:
-            raise FeishuApiError(-1, f"http error: {exc.__class__.__name__}") from exc
+            raise FeishuApiError(
+                -1,
+                f"http error: {exc.__class__.__name__}",
+                endpoint=path,
+                details={"request": {"params": params or {}, "json": json_body or {}}},
+            ) from exc
 
         if resp.status_code == 401:
             await self._auth.invalidate()
-            raise FeishuApiError(401, "unauthorized")
+            raise _feishu_error_from_response(
+                resp,
+                endpoint=path,
+                request={"params": params or {}, "json": json_body or {}},
+                default_message="unauthorized",
+            )
         if resp.status_code >= 400:
-            raise FeishuApiError(resp.status_code, f"http {resp.status_code}")
+            raise _feishu_error_from_response(
+                resp,
+                endpoint=path,
+                request={"params": params or {}, "json": json_body or {}},
+            )
 
         try:
             payload = resp.json()
@@ -384,7 +490,17 @@ class FeishuClient:
             raise FeishuApiError(-1, "invalid json") from exc
         code = payload.get("code", 0)
         if code != 0:
-            raise FeishuApiError(int(code), str(payload.get("msg", "")))
+            raise FeishuApiError(
+                int(code),
+                str(payload.get("msg", "")),
+                http_status=resp.status_code,
+                endpoint=path,
+                request_id=_request_id_from_response(resp, payload),
+                details={
+                    "request": {"params": params or {}, "json": json_body or {}},
+                    "response": payload,
+                },
+            )
         return payload
 
     async def send_message(
@@ -455,6 +571,12 @@ class FeishuClient:
         # Drive upload_all 是 multipart 接口，与其他 JSON 接口签名不同。
         url = f"{self._api_base_url}/open-apis/drive/v1/files/upload_all"
         token = await self._auth.get_token()
+        request_summary = {
+            "file_name": file_name,
+            "parent_type": parent_type,
+            "parent_node": parent_node or "",
+            "size": len(content),
+        }
         files = {
             "file_name": (None, file_name),
             "parent_type": (None, parent_type),
@@ -469,12 +591,40 @@ class FeishuClient:
                 files=files,
             )
         except httpx.HTTPError as exc:
-            raise FeishuApiError(-1, f"http error: {exc.__class__.__name__}") from exc
+            raise FeishuApiError(
+                -1,
+                f"http error: {exc.__class__.__name__}",
+                endpoint="/open-apis/drive/v1/files/upload_all",
+                details={"request": request_summary},
+            ) from exc
         if resp.status_code >= 400:
-            raise FeishuApiError(resp.status_code, f"http {resp.status_code}")
-        payload = resp.json()
+            raise _feishu_error_from_response(
+                resp,
+                endpoint="/open-apis/drive/v1/files/upload_all",
+                request=request_summary,
+            )
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise FeishuApiError(
+                -1,
+                "invalid json",
+                http_status=resp.status_code,
+                endpoint="/open-apis/drive/v1/files/upload_all",
+                details={
+                    "request": request_summary,
+                    "response": {"text": _truncate_text(resp.text)},
+                },
+            ) from exc
         if payload.get("code", 0) != 0:
-            raise FeishuApiError(int(payload.get("code", 0)), str(payload.get("msg", "")))
+            raise FeishuApiError(
+                int(payload.get("code", 0)),
+                str(payload.get("msg", "")),
+                http_status=resp.status_code,
+                endpoint="/open-apis/drive/v1/files/upload_all",
+                request_id=_request_id_from_response(resp, payload),
+                details={"request": request_summary, "response": payload},
+            )
         data = payload.get("data") or {}
         file_token = data.get("file_token") or ""
         return FeishuFileUploaded(

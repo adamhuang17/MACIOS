@@ -35,6 +35,7 @@ from openai import AsyncOpenAI
 
 from agent_hub.config.settings import Settings, get_settings
 from agent_hub.core.models import GuardResult
+from agent_hub.core.openai_compat import provider_extra_body
 
 logger = structlog.get_logger(__name__)
 
@@ -304,6 +305,10 @@ class LLMGuard:
     async def check(self, message: str) -> GuardResult:
         """对消息进行 LLM 语义检测。"""
         try:
+            extra_body = provider_extra_body(
+                self._settings.llm_base_url,
+                self._model,
+            )
             request = self._client.chat.completions.create(
                 model=self._model,
                 max_tokens=512,
@@ -316,6 +321,7 @@ class LLMGuard:
                     "type": "function",
                     "function": {"name": "analyze_injection"},
                 },  # type: ignore[arg-type]
+                extra_body=extra_body or None,
             )
             if self._timeout_seconds > 0:
                 response = await asyncio.wait_for(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_hub.connectors.feishu import FakeFeishuClient
+from agent_hub.connectors.feishu import FakeFeishuClient, FeishuApiError
 from agent_hub.pilot.skills.real_chain import register_real_chain_skills
 from agent_hub.pilot.skills.registry import SkillInvocation, SkillRegistry
 
@@ -95,6 +95,67 @@ async def test_upload_share_prefers_requester_open_id_over_admin_fallback() -> N
     assert client.shared_files[0]["member_open_id"] == "ou_requester"
     assert result.artifact_payload["metadata"]["shared_open_id"] == "ou_requester"
     assert result.artifact_payload["metadata"]["shared_open_ids"] == ["ou_requester"]
+
+
+@pytest.mark.asyncio
+async def test_upload_share_fails_when_share_permission_fails() -> None:
+    class _ShareFailClient(FakeFeishuClient):
+        async def share_file(  # type: ignore[override]
+            self,
+            *,
+            file_token: str,
+            member_open_id: str,
+            perm: str = "edit",
+            need_notification: bool = True,
+            file_type: str = "file",
+        ) -> None:
+            raise FeishuApiError(
+                99991663,
+                "member_open_id has no permission",
+                http_status=400,
+                endpoint="/open-apis/drive/v1/permissions/file_x/members",
+                details={
+                    "request": {"member_open_id": member_open_id},
+                    "response": {"code": 99991663},
+                },
+            )
+
+    client = _ShareFailClient()
+    registry = SkillRegistry()
+
+    async def reader(_artifact_id: str) -> bytes:
+        return b"pptx-content"
+
+    register_real_chain_skills(
+        registry,
+        feishu_client=client,
+        artifact_reader=reader,
+        default_folder_token="folder-x",
+        admin_open_id="ou_admin",
+    )
+
+    result = await registry.invoke(
+        SkillInvocation(
+            skill_name="real.drive.upload_share",
+            params={
+                "file_name": "deck.pptx",
+                "input_artifacts": {
+                    "pptx": {
+                        "artifact_id": "art-pptx",
+                        "type": "pptx",
+                        "content": b"pptx-content",
+                    }
+                },
+            },
+        )
+    )
+
+    assert result.success is False
+    assert "member_open_id has no permission" in (result.error or "")
+    assert result.output["file_token"]
+    assert result.error_details["phase"] == "share_file"
+    assert result.error_details["member_open_id"] == "ou_admin"
+    assert result.error_details["feishu"]["code"] == 99991663
 
 
 @pytest.mark.asyncio

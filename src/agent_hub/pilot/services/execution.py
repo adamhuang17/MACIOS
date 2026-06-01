@@ -12,11 +12,13 @@ skill invoke、artifact 生成、状态迁移与事件发布。
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from agent_hub.pilot.domain.enums import (
+    ApprovalStatus,
     EventLevel,
     EventType,
     PlanStepAction,
@@ -196,6 +198,88 @@ class ExecutionEngine:
         return await self._drive_and_finalize(running_task, plan)
 
     # ── 共享执行循环 ─────────────────────────────────
+
+    async def recover_failed_step(
+        self,
+        task: Task,
+        plan: Plan,
+        step_id: str,
+    ) -> RunResult:
+        """Recover a failed task by rerunning one failed step in the same task."""
+        if task.status not in (
+            TaskStatus.FAILED,
+            TaskStatus.RETRYABLE_FAILED,
+        ):
+            msg = (
+                f"task {task.task_id} status={task.status.value}, "
+                "only failed tasks can be recovered"
+            )
+            raise ValueError(msg)
+        if plan.task_id != task.task_id:
+            msg = (
+                f"plan {plan.plan_id} does not belong to task {task.task_id}"
+            )
+            raise ValueError(msg)
+
+        step = await self._repo.get_step(step_id)
+        if step is None:
+            msg = f"unknown step: {step_id}"
+            raise LookupError(msg)
+        if step.task_id != task.task_id or step.plan_id != plan.plan_id:
+            msg = (
+                f"step {step_id} does not belong to task {task.task_id} "
+                f"and plan {plan.plan_id}"
+            )
+            raise ValueError(msg)
+        if step.status not in (
+            PlanStepStatus.FAILED,
+            PlanStepStatus.RETRYABLE_FAILED,
+        ):
+            msg = (
+                f"step {step_id} status={step.status.value}, "
+                "only failed steps can be recovered"
+            )
+            raise ValueError(msg)
+
+        reset_status = await self._recovery_reset_status(step)
+        reset_step = self._reset_step_for_recovery(step, reset_status)
+        await self._repo.save(reset_step)
+        await self._publisher.record(ExecutionEvent(
+            workspace_id=reset_step.workspace_id,
+            trace_id=task.trace_id,
+            task_id=task.task_id,
+            plan_id=reset_step.plan_id,
+            step_id=reset_step.step_id,
+            type=EventType.STEP_STATUS_CHANGED,
+            message="step reset for recovery",
+            payload={
+                "status": reset_step.status.value,
+                "previous_status": step.status.value,
+                "recovery": True,
+                "retry_count": reset_step.retry_count,
+            },
+        ))
+
+        running_task = transition(task, TaskAction.RETRY, patch={
+            "current_step_id": reset_step.step_id,
+            "error": None,
+            "final_summary": None,
+            "retry_count": task.retry_count + 1,
+        })
+        await self._repo.save(running_task)
+        await self._emit_task_status(running_task)
+        await self._progress.emit(
+            running_task,
+            "任务已恢复，继续执行失败步骤",
+            phase="execution",
+            plan_id=plan.plan_id,
+            step_id=reset_step.step_id,
+            payload={
+                "recovery": True,
+                "from_step_id": reset_step.step_id,
+            },
+        )
+        return await self._drive_and_finalize(running_task, plan)
 
     async def _drive_and_finalize(
         self, running_task: Task, plan: Plan,
@@ -470,6 +554,16 @@ class ExecutionEngine:
                 actor_id="system",
                 idempotency_key=step.idempotency_key,
             ))
+        invocation_payload: dict[str, object] = {
+            "duration_ms": result.duration_ms,
+            "success": result.success,
+        }
+        if not result.success:
+            invocation_payload["error"] = result.error or "skill failed"
+            if result.error_details:
+                invocation_payload["error_details"] = result.error_details
+            if result.output:
+                invocation_payload["partial_output"] = result.output
         await self._publisher.record(ExecutionEvent(
             workspace_id=step.workspace_id,
             trace_id=task.trace_id,
@@ -479,10 +573,18 @@ class ExecutionEngine:
             type=EventType.SKILL_INVOKED,
             level=EventLevel.INFO if result.success else EventLevel.ERROR,
             message=f"skill {step.skill_name} {'ok' if result.success else 'fail'}",
-            payload={"duration_ms": result.duration_ms, "success": result.success},
+            payload=invocation_payload,
         ))
 
         if not result.success:
+            failed_payload: dict[str, object] = {
+                "status": PlanStepStatus.FAILED.value,
+                "error": result.error or "skill failed",
+            }
+            if result.error_details:
+                failed_payload["error_details"] = result.error_details
+            if result.output:
+                failed_payload["partial_output"] = result.output
             failed = transition(step, PlanStepAction.FAIL, patch={
                 "error": result.error or "skill failed",
             })
@@ -496,8 +598,15 @@ class ExecutionEngine:
                 type=EventType.STEP_STATUS_CHANGED,
                 level=EventLevel.ERROR,
                 message="step failed",
-                payload={"status": failed.status.value, "error": failed.error},
+                payload=failed_payload,
             ))
+            progress_payload: dict[str, object] = {
+                "error": failed.error or "skill failed",
+            }
+            if result.error_details:
+                progress_payload["error_details"] = result.error_details
+            if result.output:
+                progress_payload["partial_output"] = result.output
             await self._progress.emit(
                 task,
                 f"步骤失败：{failed.title}",
@@ -505,7 +614,7 @@ class ExecutionEngine:
                 plan_id=failed.plan_id,
                 step_id=failed.step_id,
                 level=EventLevel.ERROR,
-                payload={"error": failed.error or "skill failed"},
+                payload=progress_payload,
             )
             return StepExecution(
                 step_id=failed.step_id,
@@ -572,6 +681,45 @@ class ExecutionEngine:
     @classmethod
     def _supports_dry_run(cls, step: PlanStep) -> bool:
         return step.kind in cls._DRY_RUN_KINDS
+
+    async def _recovery_reset_status(
+        self,
+        step: PlanStep,
+    ) -> PlanStepStatus:
+        if not step.requires_approval:
+            return PlanStepStatus.PENDING
+        approvals = await self._repo.list_approvals_for_task(
+            step.task_id,
+            workspace_id=step.workspace_id,
+        )
+        approved = {
+            ApprovalStatus.APPROVED,
+            ApprovalStatus.AUTO_APPROVED,
+        }
+        if any(
+            a.target_id == step.step_id and a.status in approved
+            for a in approvals
+        ):
+            return PlanStepStatus.APPROVED
+        return PlanStepStatus.PENDING
+
+    @staticmethod
+    def _reset_step_for_recovery(
+        step: PlanStep,
+        status: PlanStepStatus,
+    ) -> PlanStep:
+        now = datetime.now(UTC)
+        return step.model_copy(update={
+            "status": status,
+            "version": step.version + 1,
+            "updated_at": now,
+            "retry_count": step.retry_count + 1,
+            "error": None,
+            "output_artifact_id": None,
+            "dry_run_result": None,
+            "started_at": None,
+            "finished_at": None,
+        })
 
     async def _emit_task_status(self, task: Task) -> None:
         await self._publisher.record(ExecutionEvent(

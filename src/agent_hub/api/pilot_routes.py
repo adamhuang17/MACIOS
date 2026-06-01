@@ -116,6 +116,31 @@ def build_pilot_router(runtime: PilotRuntime) -> APIRouter:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return _handle_to_response(handle, runtime)
 
+    @router.post("/tasks/{task_id}/steps/{step_id}/recover",
+                 response_model=ResumeTaskResponse)
+    async def recover_step(
+        task_id: str,
+        step_id: str,
+        body: RecoveryRequest,
+    ) -> ResumeTaskResponse:
+        try:
+            payload = await runtime.commands.recover_failed_step(
+                task_id,
+                step_id,
+                requester_id=body.requester_id,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CommandError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except IllegalTransition as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ConcurrencyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return ResumeTaskResponse(**payload)
+
     @router.post("/tasks/{task_id}/recover_from/{step_id}",
                  response_model=SubmitTaskResponse)
     async def recover_from(

@@ -245,6 +245,30 @@ class TaskOrchestrator:
 
     # ── helpers ────────────────────────────────────
 
+    async def recover_failed_step(
+        self,
+        task_id: str,
+        step_id: str,
+    ) -> RunResult:
+        """Recover a failed step in-place on the existing task and plan."""
+        task = await self._repo.get_task(task_id)
+        if task is None:
+            msg = f"unknown task: {task_id}"
+            raise LookupError(msg)
+        if task.plan_id is None:
+            msg = f"task {task_id} has no linked plan"
+            raise ValueError(msg)
+        plan = await self._repo.get_plan(task.plan_id)
+        if plan is None:
+            msg = f"unknown plan: {task.plan_id}"
+            raise LookupError(msg)
+        if plan.task_id != task.task_id:
+            msg = (
+                f"plan {plan.plan_id} does not belong to task {task.task_id}"
+            )
+            raise ValueError(msg)
+        return await self._execution.recover_failed_step(task, plan, step_id)
+
     async def _get_or_create_workspace(self, request: TaskRequest) -> Workspace:
         if request.workspace_id is not None:
             existing = await self._repo.get_workspace(request.workspace_id)
