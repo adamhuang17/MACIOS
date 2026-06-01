@@ -22,6 +22,7 @@ from agent_hub.pilot import (
     PilotCommandService,
     PilotEventPublisher,
     PilotRepository,
+    Plan,
     PlanContext,
     PlanningService,
     PlanStatus,
@@ -42,7 +43,7 @@ from agent_hub.pilot import (
 )
 from agent_hub.pilot.domain.models import Approval
 from agent_hub.pilot.services.dto import PlanBlueprint
-from agent_hub.pilot.skills.registry import SkillResult, SkillSpec
+from agent_hub.pilot.skills.registry import SkillInvocation, SkillResult, SkillSpec
 
 # ── 通用 fixtures ────────────────────────────────────
 
@@ -558,6 +559,104 @@ async def test_execution_resume_rejects_non_blocked_task(
     ))
     with pytest.raises(ValueError, match="无法 resume"):
         await engine.resume_plan(task, plan)
+
+
+@pytest.mark.asyncio
+async def test_command_recovers_failed_step_in_same_task(
+    commands: PilotCommandService,
+    execution: ExecutionEngine,
+    repo: PilotRepository,
+    registry: SkillRegistry,
+) -> None:
+    calls = {"flaky": 0}
+
+    async def ok(inv: SkillInvocation) -> SkillResult:
+        return SkillResult(skill_name=inv.skill_name, success=True)
+
+    async def flaky(inv: SkillInvocation) -> SkillResult:
+        calls["flaky"] += 1
+        if calls["flaky"] == 1:
+            return SkillResult(
+                skill_name=inv.skill_name,
+                success=False,
+                error="temporary failure",
+            )
+        return SkillResult(skill_name=inv.skill_name, success=True)
+
+    registry.register(SkillSpec(
+        skill_name="test.recover.ok",
+        supports_dry_run=False,
+    ), ok)
+    registry.register(SkillSpec(
+        skill_name="test.recover.flaky",
+        supports_dry_run=False,
+    ), flaky)
+
+    ws, task = _make_task()
+    plan = Plan(
+        workspace_id=ws.workspace_id,
+        task_id=task.task_id,
+        goal="recover failed step",
+        status=PlanStatus.APPROVED,
+    )
+    first = PlanStep(
+        workspace_id=ws.workspace_id,
+        task_id=task.task_id,
+        plan_id=plan.plan_id,
+        index=0,
+        title="first",
+        kind=PlanStepKind.READ_CONTEXT,
+        skill_name="test.recover.ok",
+    )
+    failed = PlanStep(
+        workspace_id=ws.workspace_id,
+        task_id=task.task_id,
+        plan_id=plan.plan_id,
+        index=1,
+        title="flaky",
+        kind=PlanStepKind.SUMMARIZE,
+        skill_name="test.recover.flaky",
+        depends_on=[first.step_id],
+    )
+    plan = plan.model_copy(update={
+        "step_ids": [first.step_id, failed.step_id],
+    })
+
+    from agent_hub.pilot import TaskAction, transition
+    task = task.model_copy(update={"plan_id": plan.plan_id})
+    task = transition(task, TaskAction.START_PLANNING)
+    task = transition(task, TaskAction.REQUEST_APPROVAL)
+    task = transition(task, TaskAction.APPROVE)
+
+    await repo.save(ws, expected_version=None)
+    await repo.save(task, expected_version=None)
+    await repo.save(plan, expected_version=None)
+    await repo.save(first, expected_version=None)
+    await repo.save(failed, expected_version=None)
+
+    first_run = await execution.run_plan(task, plan)
+    assert first_run.final_status == TaskStatus.FAILED
+    assert calls["flaky"] == 1
+
+    payload = await commands.recover_failed_step(
+        task.task_id,
+        failed.step_id,
+        requester_id="u1",
+    )
+
+    assert payload["task_id"] == task.task_id
+    assert payload["task_status"] == TaskStatus.SUCCEEDED.value
+    assert calls["flaky"] == 2
+
+    refreshed_first = await repo.get_step(first.step_id)
+    refreshed_failed = await repo.get_step(failed.step_id)
+    assert refreshed_first is not None
+    assert refreshed_failed is not None
+    assert refreshed_first.status == PlanStepStatus.SUCCEEDED
+    assert refreshed_failed.status == PlanStepStatus.SUCCEEDED
+    assert refreshed_failed.retry_count == 1
+    tasks = await repo.list_tasks(workspace_id=ws.workspace_id)
+    assert [t.task_id for t in tasks] == [task.task_id]
 
 
 @pytest.mark.asyncio

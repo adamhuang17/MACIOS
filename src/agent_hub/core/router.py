@@ -47,6 +47,7 @@ from agent_hub.core.models import (
     SubTask,
     UserContext,
 )
+from agent_hub.core.openai_compat import provider_extra_body
 
 logger = structlog.get_logger(__name__)
 
@@ -295,6 +296,7 @@ class DecisionRouter:
         """
         log = logger.bind(model=self._model)
         log.debug("decision_router.llm_call.start")
+        extra_body = provider_extra_body(self._settings.llm_base_url, self._model)
 
         response = await self._client.chat.completions.create(
             model=self._model,
@@ -308,6 +310,7 @@ class DecisionRouter:
                 "type": "function",
                 "function": {"name": "make_routing_decision"},
             },
+            extra_body=extra_body or None,
             timeout=httpx.Timeout(10.0),
         )
 
@@ -455,4 +458,3 @@ class DecisionRouter:
         return DecisionRouter._fallback_result(
             "LLM调用失败，群聊无明确触发，降级为忽略处理"
         )
-

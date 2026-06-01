@@ -81,6 +81,7 @@ _TASK_TABLE: dict[tuple[TaskStatus, TaskAction], TaskStatus] = {
     (TaskStatus.RETRYABLE_FAILED, TaskAction.RETRY): TaskStatus.RUNNING,
     (TaskStatus.RETRYABLE_FAILED, TaskAction.FAIL): TaskStatus.FAILED,
     (TaskStatus.RETRYABLE_FAILED, TaskAction.CANCEL): TaskStatus.CANCELLED,
+    (TaskStatus.FAILED, TaskAction.RETRY): TaskStatus.RUNNING,
     (TaskStatus.SUCCEEDED, TaskAction.ARCHIVE): TaskStatus.ARCHIVED,
     (TaskStatus.FAILED, TaskAction.ARCHIVE): TaskStatus.ARCHIVED,
     (TaskStatus.CANCELLED, TaskAction.ARCHIVE): TaskStatus.ARCHIVED,

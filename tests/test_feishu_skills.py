@@ -14,7 +14,11 @@ from agent_hub.pilot.skills import (
 )
 
 
-def _build_registry(client: FakeFeishuClient) -> SkillRegistry:
+def _build_registry(
+    client: FakeFeishuClient,
+    *,
+    default_receive_open_id: str = "",
+) -> SkillRegistry:
     registry = SkillRegistry()
 
     async def reader(_artifact_id: str) -> str:
@@ -25,6 +29,7 @@ def _build_registry(client: FakeFeishuClient) -> SkillRegistry:
         client,
         artifact_reader=reader,
         default_folder_token="folder-x",
+        default_receive_open_id=default_receive_open_id,
     )
     return registry
 
@@ -243,6 +248,29 @@ async def test_send_message_builds_summary_from_share_artifact() -> None:
         "（飞书已单独推送一条「与我共享」通知，可直接点击打开）"
     )
     assert result.artifact_payload["content"] == payload["text"]
+
+
+@pytest.mark.asyncio
+async def test_send_message_uses_default_open_id_when_chat_id_missing() -> None:
+    client = FakeFeishuClient()
+    registry = _build_registry(client, default_receive_open_id="ou_admin")
+
+    result = await registry.invoke(
+        SkillInvocation(
+            skill_name="feishu.im.send_message",
+            params={
+                "title": "PPT 已完成",
+                "text": "结果已生成",
+            },
+        )
+    )
+
+    assert result.success is True, result.error
+    assert result.output["receive_id"] == "ou_admin"
+    assert result.output["receive_id_type"] == "open_id"
+    sent = client.sent_messages[0]
+    assert sent["receive_id"] == "ou_admin"
+    assert sent["receive_id_type"] == "open_id"
 
 
 @pytest.mark.asyncio

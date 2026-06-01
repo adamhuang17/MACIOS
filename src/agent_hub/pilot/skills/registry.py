@@ -65,6 +65,7 @@ class SkillResult(BaseModel):
     output: dict[str, Any] = Field(default_factory=dict)
     artifact_payload: dict[str, Any] | None = None
     error: str | None = None
+    error_details: dict[str, Any] = Field(default_factory=dict)
     duration_ms: int = 0
     dry_run: bool = False
 
@@ -176,10 +177,12 @@ class SkillRegistry:
                 skill=rs.spec.skill_name,
                 error=str(exc),
             )
+            to_details = getattr(exc, "to_error_details", None)
             return SkillResult(
                 skill_name=rs.spec.skill_name,
                 success=False,
                 error=str(exc),
+                error_details=to_details() if callable(to_details) else {},
                 duration_ms=duration_ms,
                 dry_run=invocation.dry_run,
             )

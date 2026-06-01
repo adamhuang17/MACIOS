@@ -766,10 +766,10 @@ function renderActions(d) {
   if (!acts.length) return '';
   const buttons = acts.map(a => {
     if (a.type === 'retry_task') {
-      return `<button class="warn tiny" onclick="retry()">重试任务</button>`;
+      return `<button class="warn tiny" onclick="retry()">${escapeHtml(a.label || '重试')}</button>`;
     }
     if (a.type === 'recover_from') {
-      return `<button class="warn tiny" onclick="recoverFrom('${escapeHtml(a.step_id)}')">从「${escapeHtml(skillLabel(a.skill_name) || a.step_id)}」恢复</button>`;
+      return `<button class="warn tiny" onclick="recoverFrom('${escapeHtml(a.step_id)}')">${escapeHtml(a.label || '恢复')}</button>`;
     }
     if (a.type === 'resume_task') {
       const label = a.label || '继续执行';
@@ -781,6 +781,53 @@ function renderActions(d) {
     <h3>可执行操作</h3>
     <div class="row">${buttons}</div>
   </section>`;
+}
+
+function latestFailurePayloadForStep(d, stepId) {
+  const events = d.recent_events || [];
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const ev = events[i];
+    const payload = ev.payload || {};
+    if (ev.step_id === stepId && (payload.error_details || payload.partial_output)) {
+      return payload;
+    }
+  }
+  return null;
+}
+
+function renderDiagnosticDetails(payload) {
+  if (!payload) return '';
+  const details = payload.error_details || {};
+  const feishu = details.feishu || {};
+  const partial = payload.partial_output || {};
+  const rows = [
+    ['phase', details.phase],
+    ['http_status', feishu.http_status],
+    ['code', feishu.code],
+    ['message', feishu.message],
+    ['endpoint', feishu.endpoint],
+    ['request_id', feishu.request_id],
+    ['file_token', details.file_token || partial.file_token],
+    ['folder_token', details.folder_token || partial.folder_token],
+    ['member_open_id', details.member_open_id],
+  ].filter(([, v]) => v !== undefined && v !== null && v !== '');
+  if (!rows.length && !Object.keys(details).length && !Object.keys(partial).length) return '';
+  const summary = rows.map(([k, v]) =>
+    `<div><strong>${escapeHtml(k)}:</strong> ${escapeHtml(v)}</div>`
+  ).join('');
+  const raw = JSON.stringify({
+    error_details: details,
+    partial_output: partial,
+  }, null, 2);
+  return `
+    <div class="err-msg">
+      ${summary}
+      <details class="expand">
+        <summary>diagnostic JSON</summary>
+        <pre>${escapeHtml(raw)}</pre>
+      </details>
+    </div>
+  `;
 }
 
 function renderSteps(d) {
@@ -800,12 +847,14 @@ function renderSteps(d) {
       s.started_at ? `<span>开始 ${fmtTimeShort(s.started_at)}</span>` : '',
       s.finished_at ? `<span>结束 ${fmtTimeShort(s.finished_at)}</span>` : '',
     ].filter(Boolean).join(' ');
+    const failurePayload = latestFailurePayloadForStep(d, s.step_id);
     return `<div class="step ${cls}">
       <div class="idx">${i + 1}</div>
       <div>
         <div class="title">${escapeHtml(s.title || skillLabel(s.skill_name))}</div>
         <div class="sub">${sub}</div>
         ${s.error ? `<div class="err-msg">${escapeHtml(s.error)}</div>` : ''}
+        ${renderDiagnosticDetails(failurePayload)}
       </div>
     </div>`;
   }).join('');
@@ -957,6 +1006,7 @@ function renderEvents(d) {
       <div>
         <span class="label">${escapeHtml(EVENT_LABELS[ev.type] || ev.type)}</span>
         <span class="msg">${escapeHtml(ev.message || '')}</span>
+        ${renderDiagnosticDetails(ev.payload || null)}
       </div>
     </div>
   `).join('');
@@ -1004,14 +1054,14 @@ async function retry() {
 async function recoverFrom(stepId) {
   const actor = (document.getElementById('actor').value || 'dashboard-user').trim();
   try {
-    const r = await fetch(`${API}/tasks/${selectedTaskId}/steps/${stepId}/retry`, {
+    const r = await fetch(`${API}/tasks/${selectedTaskId}/steps/${stepId}/recover`, {
       method: 'POST', headers: {'content-type':'application/json'},
       body: JSON.stringify({requester_id: actor, auto_approve: false}),
     });
     if (!r.ok) throw new Error(await r.text());
-    const handle = await r.json();
-    toast('已发起恢复任务', 'ok');
-    await selectTask(handle.task_id);
+    await r.json();
+    toast('已从失败步骤恢复执行', 'ok');
+    await loadDetail(); await loadTasks({force:true});
   } catch (e) { toast('恢复失败：' + (e.message || e), 'err'); }
 }
 

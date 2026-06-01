@@ -17,6 +17,7 @@ from openai import OpenAI
 
 from agent_hub.core.base_agent import BaseAgent
 from agent_hub.core.models import AgentResult, ReActStep, ReActTrace, SubTask
+from agent_hub.core.openai_compat import provider_extra_body
 from agent_hub.core.risk import RiskPolicy, ToolProfile
 
 if TYPE_CHECKING:
@@ -81,6 +82,7 @@ class LLMAgent(BaseAgent):
     ) -> None:
         super().__init__(name="llm_agent", description="调用大模型生成内容")
         self._default_model = default_model
+        self._base_url = base_url or ""
         self._max_react_rounds = max_react_rounds
 
         # 主客户端：OpenAI 兼容接口（智谱等）
@@ -579,6 +581,10 @@ class LLMAgent(BaseAgent):
         response = self._primary.chat.completions.create(
             model=self._default_model,
             messages=[{"role": "user", "content": prompt}],
+            extra_body=provider_extra_body(
+                self._base_url,
+                self._default_model,
+            ) or None,
         )
         return response.choices[0].message.content or ""
 
@@ -592,6 +598,10 @@ class LLMAgent(BaseAgent):
                 {"role": "system", "content": system_prompt},
                 *messages,
             ],
+            extra_body=provider_extra_body(
+                self._base_url,
+                self._default_model,
+            ) or None,
         )
         return response.choices[0].message.content or ""
 
@@ -632,6 +642,10 @@ class LLMAgent(BaseAgent):
             model=self._default_model,
             messages=[{"role": "user", "content": prompt}],
             stream=True,
+            extra_body=provider_extra_body(
+                self._base_url,
+                self._default_model,
+            ) or None,
         )
         for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:

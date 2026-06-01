@@ -147,6 +147,26 @@ class PilotCommandService:
 
     # ── 内部 ───────────────────────────────────────
 
+    async def recover_failed_step(
+        self,
+        task_id: str,
+        step_id: str,
+        *,
+        requester_id: str,
+    ) -> dict[str, object]:
+        """Resume an existing failed task from one failed step."""
+        run_result = await self._orchestrator.recover_failed_step(
+            task_id,
+            step_id,
+        )
+        return {
+            "task_id": run_result.task.task_id,
+            "task_status": run_result.final_status.value,
+            "run_result": _summarize_run(run_result),
+            "recovered_step_id": step_id,
+            "requester_id": requester_id,
+        }
+
     async def _decide_plan(
         self,
         approval: Approval,

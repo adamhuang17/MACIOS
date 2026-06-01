@@ -346,7 +346,22 @@ def _make_real_upload_share_skill(
                 parent_node=folder_token,
             )
         except FeishuApiError as exc:
-            return SkillResult(skill_name=inv.skill_name, success=False, error=str(exc))
+            return SkillResult(
+                skill_name=inv.skill_name,
+                success=False,
+                error=str(exc),
+                output={
+                    "file_name": file_name,
+                    "byte_size": len(content_bytes),
+                    "folder_token": folder_token or "",
+                },
+                error_details={
+                    "phase": "upload_file",
+                    "file_name": file_name,
+                    "folder_token": folder_token or "",
+                    "feishu": exc.to_error_details(),
+                },
+            )
 
         share_url = (uploaded.download_url or "").strip()
         # 飞书 Drive upload_all 实际并不返回稳定可访问 URL，需要基于 file_token 兜底拼接。
@@ -362,6 +377,7 @@ def _make_real_upload_share_skill(
         share_member_open_ids = recipient_open_ids or (
             [admin_open_id] if admin_open_id else []
         )
+        shared_open_ids: list[str] = []
         if uploaded.file_token:
             for open_id in share_member_open_ids:
                 try:
@@ -372,11 +388,32 @@ def _make_real_upload_share_skill(
                         need_notification=True,
                         file_type="file",
                     )
-                except FeishuApiError:
+                    shared_open_ids.append(open_id)
+                except FeishuApiError as exc:
                     logger.warning(
                         "drive_share_failed",
                         file_token=uploaded.file_token,
                         member_open_id=open_id,
+                        error=str(exc),
+                    )
+                    return SkillResult(
+                        skill_name=inv.skill_name,
+                        success=False,
+                        error=str(exc),
+                        output={
+                            "file_token": uploaded.file_token,
+                            "share_url": share_url,
+                            "byte_size": uploaded.size,
+                            "folder_token": folder_token or "",
+                            "shared_open_ids": shared_open_ids,
+                        },
+                        error_details={
+                            "phase": "share_file",
+                            "file_token": uploaded.file_token,
+                            "member_open_id": open_id,
+                            "shared_open_ids": shared_open_ids,
+                            "feishu": exc.to_error_details(),
+                        },
                     )
 
         return SkillResult(

@@ -292,12 +292,21 @@ class PilotQueryService:
                         "label": "继续执行",
                     })
         if task.status in (TaskStatus.FAILED, TaskStatus.RETRYABLE_FAILED):
-            actions.append({"type": "retry_task"})
+            actions.append({"type": "retry_task", "label": "重试"})
             failed_steps = [
-                s for s in steps if s.status == PlanStepStatus.FAILED
+                s for s in steps
+                if s.status in (
+                    PlanStepStatus.FAILED,
+                    PlanStepStatus.RETRYABLE_FAILED,
+                )
             ]
             for s in failed_steps:
-                actions.append({"type": "recover_from", "step_id": s.step_id})
+                actions.append({
+                    "type": "recover_from",
+                    "step_id": s.step_id,
+                    "skill_name": s.skill_name,
+                    "label": "恢复",
+                })
         return actions
 
 

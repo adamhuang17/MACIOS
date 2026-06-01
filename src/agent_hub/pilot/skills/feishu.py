@@ -308,18 +308,30 @@ def _make_upload_file_skill(
 # ── feishu.im.send_message ─────────────────────────
 
 
-def _make_send_message_skill(client: FeishuClientProtocol) -> tuple[SkillSpec, Any]:
+def _make_send_message_skill(
+    client: FeishuClientProtocol,
+    *,
+    default_receive_open_id: str = "",
+) -> tuple[SkillSpec, Any]:
     async def _send(inv: SkillInvocation) -> SkillResult:
         params = inv.params
         receive_id = str(params.get("receive_id") or params.get("chat_id") or "")
         text = _build_message_text(params)
         msg_type = str(params.get("msg_type", "text") or "text")
         receive_id_type = str(params.get("receive_id_type", "chat_id") or "chat_id")
+        if not receive_id and default_receive_open_id:
+            receive_id = default_receive_open_id
+            receive_id_type = "open_id"
         if not receive_id:
             return SkillResult(
                 skill_name=inv.skill_name,
                 success=False,
                 error="missing required param: receive_id/chat_id",
+                error_details={
+                    "phase": "validate_params",
+                    "missing": ["receive_id", "chat_id"],
+                    "hint": "Set chat_id/receive_id, or configure FEISHU_ADMIN_OPEN_ID as fallback.",
+                },
             )
         if not text:
             return SkillResult(
@@ -520,6 +532,7 @@ def register_feishu_skills(
     *,
     artifact_reader: ArtifactContentReader | None = None,
     default_folder_token: str = "",
+    default_receive_open_id: str = "",
     allow_overwrite: bool = False,
 ) -> None:
     """把 M4 飞书技能集合注册到 ``registry``。
@@ -545,7 +558,10 @@ def register_feishu_skills(
         )
         registry.register(spec, fn, allow_overwrite=allow_overwrite)
 
-    spec, fn = _make_send_message_skill(client)
+    spec, fn = _make_send_message_skill(
+        client,
+        default_receive_open_id=default_receive_open_id,
+    )
     registry.register(spec, fn, allow_overwrite=allow_overwrite)
 
 
