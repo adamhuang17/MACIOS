@@ -744,6 +744,18 @@ function renderApprovals(d) {
   if (!pending.length) return '';
   const cards = pending.map(a => {
     const apprId = escapeHtml(a.approval_id);
+    const approverActor = approvalActor(a);
+    const approveArgs = [
+      a.approval_id || '',
+      'approve',
+      approverActor || '',
+    ].map(v => JSON.stringify(v)).join(',');
+    const rejectArgs = [
+      a.approval_id || '',
+      'reject',
+      approverActor || '',
+    ].map(v => JSON.stringify(v)).join(',');
+    const approverLine = formatApprovers(a.approvers || []);
     return `
       <div class="approval-card" style="margin-bottom:10px">
         <div class="pending-title">⚠ 等待你审批 · ${escapeHtml(targetTypeLabel(a.target_type))}</div>
@@ -751,11 +763,12 @@ function renderApprovals(d) {
           申请人 ${escapeHtml(a.requester_id || '—')} ·
           ${escapeHtml(fmtTime(a.created_at))}
         </div>
+        ${approverLine ? `<div class="meta">审批人 ${approverLine}</div>` : ''}
         ${a.reason ? `<div style="margin-top:6px;font-size:13px">${escapeHtml(a.reason)}</div>` : ''}
         ${a.preview ? `<div class="preview">${escapeHtml(a.preview)}</div>` : ''}
         <div class="actions">
-          <button onclick="decide('${apprId}','approve')">✓ 同意</button>
-          <button class="danger" onclick="decide('${apprId}','reject')">✗ 拒绝</button>
+          <button onclick='decide(${approveArgs})'>✓ 同意</button>
+          <button class="danger" onclick='decide(${rejectArgs})'>✗ 拒绝</button>
         </div>
       </div>
     `;
@@ -764,6 +777,17 @@ function renderApprovals(d) {
     <h3 style="margin-bottom:8px;color:var(--warn);text-transform:uppercase;letter-spacing:0.6px">待办审批</h3>
     ${cards}
   </section>`;
+}
+
+function approvalActor(approval) {
+  const approvers = Array.isArray(approval.approvers) ? approval.approvers : [];
+  if (approvers.length) return String(approvers[0] || '').trim();
+  return '';
+}
+
+function formatApprovers(approvers) {
+  if (!Array.isArray(approvers) || !approvers.length) return '';
+  return approvers.map(a => escapeHtml(String(a || ''))).filter(Boolean).join('、');
 }
 
 function targetTypeLabel(t) {
@@ -1038,8 +1062,10 @@ function renderEvents(d) {
 }
 
 // ── 操作 ─────────────────────────────────────────
-async function decide(approvalId, decision) {
-  const actor = (document.getElementById('actor').value || 'dashboard-user').trim();
+async function decide(approvalId, decision, actorOverride = '') {
+  const actor = (
+    actorOverride || document.getElementById('actor').value || 'dashboard-user'
+  ).trim();
   try {
     const r = await fetch(`${API}/approvals/${approvalId}/decision`, {
       method: 'POST',

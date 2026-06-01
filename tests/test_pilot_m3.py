@@ -127,6 +127,14 @@ def _make_internal_registry(
     return registry, generator
 
 
+def test_internal_brief_skill_timeout_allows_llm_generation() -> None:
+    registry = SkillRegistry()
+    register_internal_document_skills(registry)
+
+    brief = registry.must_get("internal.brief.generate")
+    assert brief.spec.timeout_ms >= 60_000
+
+
 # ── ArtifactStore ────────────────────────────────
 
 

@@ -52,6 +52,7 @@ from agent_hub.pilot.skills.feishu import register_feishu_skills
 from agent_hub.pilot.skills.feishu_card import register_feishu_card_skills
 from agent_hub.pilot.skills.internal import (
     BriefGenerator,
+    OpenAICompatibleBriefGenerator,
     register_internal_document_skills,
 )
 from agent_hub.pilot.skills.real_chain import register_real_chain_skills
@@ -161,8 +162,19 @@ def build_pilot_runtime(
         publisher,
         artifact_dir=settings.pilot_artifact_dir or None,
     )
+    brief_generator_impl: BriefGenerator | None = None
+    if settings.llm_api_key and (
+        settings.pilot_use_real_gateway or settings.pilot_use_real_chain
+    ):
+        brief_generator_impl = OpenAICompatibleBriefGenerator(
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            timeout=float(max(settings.llm_call_timeout, 45)),
+        )
     brief_generator = register_internal_document_skills(
         registry,
+        brief_generator=brief_generator_impl,
         artifact_reader=artifacts.read_content_by_id,
     )
     logger.info("pilot_runtime.skills_registered", mode="internal")

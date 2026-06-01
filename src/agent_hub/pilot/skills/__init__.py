@@ -11,6 +11,7 @@ from agent_hub.pilot.skills.internal import (
     BRIEF_SECTIONS,
     ArtifactContentReader,
     BriefGenerator,
+    OpenAICompatibleBriefGenerator,
     TemplateBriefGenerator,
     register_internal_document_skills,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "ArtifactContentReader",
     "BriefGenerator",
     "DryRunUnsupported",
+    "OpenAICompatibleBriefGenerator",
     "RegisteredSkill",
     "SkillFunc",
     "SkillInvocation",

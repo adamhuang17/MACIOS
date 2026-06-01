@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -105,6 +106,7 @@ _SKILL_NAMES: dict[SkillMode, dict[str, str]] = {
         "brief_revise": "fake_brief_generate",
         "spec": "fake_slidespec_generate",
         "pptx": "fake_pptx_render",
+        "docx": "",
         "upload": "fake_drive_upload",
         "summary": "fake_im_send_summary",
     },
@@ -114,6 +116,7 @@ _SKILL_NAMES: dict[SkillMode, dict[str, str]] = {
         "brief_revise": "internal.brief.revise",
         "spec": "real.slide.generate_spec",
         "pptx": "real.slide.render_pptx",
+        "docx": "real.doc.render_docx",
         "upload": "real.drive.upload_share",
         "summary": "feishu.im.send_message",
     },
@@ -193,7 +196,7 @@ class TemplatePlanGateway:
         chat_id: str,
     ) -> list[PlanStepDraft]:
         context_skill = _context_skill_name(ctx, skills)
-        return [
+        steps = [
             PlanStepDraft(
                 ref="ctx",
                 title="收集上下文",
@@ -219,7 +222,7 @@ class TemplatePlanGateway:
                 title="生成 SlideSpec",
                 kind=PlanStepKind.GENERATE_SLIDE_SPEC,
                 skill_name=skills["spec"],
-                input_params={},
+                input_params={"title": title},
                 inputs_from=["brief"],
                 output_artifact_ref="spec",
                 depends_on=["brief"],
@@ -230,7 +233,7 @@ class TemplatePlanGateway:
                 title="渲染 PPTX",
                 kind=PlanStepKind.RENDER_SLIDES,
                 skill_name=skills["pptx"],
-                input_params={},
+                input_params={"title": title},
                 inputs_from=["spec"],
                 output_artifact_ref="pptx",
                 depends_on=["spec"],
@@ -242,7 +245,10 @@ class TemplatePlanGateway:
                 title="上传 Drive 并生成分享",
                 kind=PlanStepKind.UPLOAD,
                 skill_name=skills["upload"],
-                input_params=_upload_input_params(ctx),
+                input_params={
+                    "file_name": f"{_safe_file_stem(title)}.pptx",
+                    **_upload_input_params(ctx),
+                },
                 inputs_from=["pptx"],
                 output_artifact_ref="share",
                 depends_on=["pptx"],
@@ -262,6 +268,7 @@ class TemplatePlanGateway:
                 requires_approval=True,
             ),
         ]
+        return steps
 
     @staticmethod
     def _build_doc_only_steps(
@@ -271,7 +278,7 @@ class TemplatePlanGateway:
         chat_id: str = "",
     ) -> list[PlanStepDraft]:
         context_skill = _context_skill_name(ctx, skills)
-        return [
+        steps = [
             PlanStepDraft(
                 ref="ctx",
                 title="收集上下文",
@@ -292,18 +299,59 @@ class TemplatePlanGateway:
                 depends_on=["ctx"],
                 risk_level=RiskLevel.READ,
             ),
-            PlanStepDraft(
-                ref="share",
-                title="上传 Drive 并生成分享",
-                kind=PlanStepKind.UPLOAD,
-                skill_name=skills["upload"],
-                input_params={"file_name": f"{title}.md", **_upload_input_params(ctx)},
-                inputs_from=["brief"],
-                output_artifact_ref="share",
-                depends_on=["brief"],
-                risk_level=RiskLevel.SHARE,
-                requires_approval=True,
-            ),
+        ]
+
+        docx_skill = skills.get("docx") or ""
+        if docx_skill:
+            steps.extend([
+                PlanStepDraft(
+                    ref="doc",
+                    title="渲染 Word",
+                    kind=PlanStepKind.GENERATE_DOC,
+                    skill_name=docx_skill,
+                    input_params={"title": title},
+                    inputs_from=["brief"],
+                    output_artifact_ref="doc",
+                    depends_on=["brief"],
+                    risk_level=RiskLevel.WRITE,
+                    requires_approval=True,
+                ),
+                PlanStepDraft(
+                    ref="share",
+                    title="上传 Drive 并生成分享",
+                    kind=PlanStepKind.UPLOAD,
+                    skill_name=skills["upload"],
+                    input_params={
+                        "file_name": f"{_safe_file_stem(title)}.docx",
+                        **_upload_input_params(ctx),
+                    },
+                    inputs_from=["doc"],
+                    output_artifact_ref="share",
+                    depends_on=["doc"],
+                    risk_level=RiskLevel.SHARE,
+                    requires_approval=True,
+                ),
+            ])
+        else:
+            steps.append(
+                PlanStepDraft(
+                    ref="share",
+                    title="上传 Drive 并生成分享",
+                    kind=PlanStepKind.UPLOAD,
+                    skill_name=skills["upload"],
+                    input_params={
+                        "file_name": f"{_safe_file_stem(title)}.md",
+                        **_upload_input_params(ctx),
+                    },
+                    inputs_from=["brief"],
+                    output_artifact_ref="share",
+                    depends_on=["brief"],
+                    risk_level=RiskLevel.SHARE,
+                    requires_approval=True,
+                ),
+            )
+
+        steps.append(
             PlanStepDraft(
                 ref="summary",
                 title="私发生成结果",
@@ -316,7 +364,8 @@ class TemplatePlanGateway:
                 risk_level=RiskLevel.SHARE,
                 requires_approval=True,
             ),
-        ]
+        )
+        return steps
 
     @staticmethod
     def _build_summary_only_steps(
@@ -420,6 +469,23 @@ def _context_input_params(ctx: PlanContext, chat_id: str) -> dict[str, Any]:
         params["chat_id"] = chat_id
         params["page_size"] = int(metadata.get("feishu_context_page_size") or 20)
     return params
+
+
+def _safe_file_stem(title: str) -> str:
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", (title or "").strip())
+    stem = re.sub(r"\s+", " ", stem).strip(" .")
+    return stem[:80] or "pilot-output"
+
+
+def _default_upload_file_name(title: str, inputs_from: list[str]) -> str:
+    refs = set(inputs_from or [])
+    if {"doc", "docx"} & refs:
+        suffix = ".docx"
+    elif "brief" in refs:
+        suffix = ".md"
+    else:
+        suffix = ".pptx"
+    return f"{_safe_file_stem(title)}{suffix}"
 
 
 def _upload_input_params(ctx: PlanContext) -> dict[str, Any]:
@@ -597,7 +663,7 @@ _OPENAI_SYSTEM_PROMPT_TEMPLATE = """\
 
 # Plan profile 与必含的 PlanStepKind
 - deck_full:    READ_CONTEXT, GENERATE_DOC, GENERATE_SLIDE_SPEC, RENDER_SLIDES, UPLOAD, SUMMARIZE
-- doc_only:     READ_CONTEXT, GENERATE_DOC
+- doc_only:     READ_CONTEXT, GENERATE_DOC, UPLOAD, SUMMARIZE（real_chain 时必须包含 real.doc.render_docx 渲染 Word）
 - summary_only: READ_CONTEXT, SUMMARIZE
 - revision:     READ_CONTEXT, GENERATE_DOC
 
@@ -732,6 +798,10 @@ class OpenAIModelGateway:
             blueprint = PlanBlueprint.model_validate(data)
         except ValidationError as exc:
             raise ValueError(f"openai gateway blueprint invalid: {exc}") from exc
+        if self._skill_mode == "real_chain":
+            issue = _real_chain_blueprint_issue(blueprint)
+            if issue:
+                raise ValueError(f"openai gateway blueprint incomplete: {issue}")
         # 强制把真实 metadata 写入，避免模型省略。
         merged_meta = {
             **dict(blueprint.metadata),
@@ -739,8 +809,52 @@ class OpenAIModelGateway:
             "skill_mode": self._skill_mode,
             "model": self._model,
         }
+        if self._skill_mode == "real_chain":
+            blueprint = _apply_real_chain_defaults(blueprint, ctx)
         blueprint = _apply_feishu_private_delivery(blueprint, ctx)
         return blueprint.model_copy(update={"metadata": merged_meta})
+
+
+def _real_chain_blueprint_issue(blueprint: PlanBlueprint) -> str:
+    skill_names = {step.skill_name for step in blueprint.steps}
+    if blueprint.profile is PlanProfile.DECK_FULL:
+        required = {
+            "real.slide.generate_spec",
+            "real.slide.render_pptx",
+            "real.drive.upload_share",
+        }
+        missing = sorted(required - skill_names)
+        if missing:
+            return f"missing deck skills: {missing}"
+    if blueprint.profile is PlanProfile.DOC_ONLY:
+        required = {"internal.brief.generate", "real.doc.render_docx", "real.drive.upload_share"}
+        missing = sorted(required - skill_names)
+        if missing:
+            return f"missing doc skills: {missing}"
+    return ""
+
+
+def _apply_real_chain_defaults(
+    blueprint: PlanBlueprint,
+    ctx: PlanContext,
+) -> PlanBlueprint:
+    title = (ctx.title or ctx.raw_text[:32] or "Untitled Task").strip()
+    new_steps: list[PlanStepDraft] = []
+    for step in blueprint.steps:
+        input_params = dict(step.input_params)
+        if step.skill_name in {
+            "real.slide.generate_spec",
+            "real.slide.render_pptx",
+            "real.doc.render_docx",
+        }:
+            input_params.setdefault("title", title)
+        elif step.skill_name == "real.drive.upload_share":
+            input_params.setdefault(
+                "file_name",
+                _default_upload_file_name(title, step.inputs_from),
+            )
+        new_steps.append(step.model_copy(update={"input_params": input_params}))
+    return blueprint.model_copy(update={"steps": new_steps})
 
 
 def _apply_feishu_private_delivery(
@@ -763,6 +877,10 @@ def _apply_feishu_private_delivery(
             input_params = {**_context_input_params(ctx, chat_id), **input_params}
         elif skill_name == "real.drive.upload_share":
             input_params = {**input_params, **_upload_input_params(ctx)}
+            input_params.setdefault(
+                "file_name",
+                _default_upload_file_name(title, step.inputs_from),
+            )
         elif skill_name == "feishu.im.send_message":
             input_params = {**input_params, **_summary_delivery_params(ctx, chat_id, title)}
         new_steps.append(step.model_copy(update={

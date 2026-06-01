@@ -329,6 +329,74 @@ async def test_upload_share_accepts_brief_upstream() -> None:
 
 
 @pytest.mark.asyncio
+async def test_slidespec_infers_title_from_brief_when_param_missing() -> None:
+    registry = SkillRegistry()
+    register_real_chain_skills(registry, feishu_client=None, artifact_reader=None)
+
+    result = await registry.invoke(
+        SkillInvocation(
+            skill_name="real.slide.generate_spec",
+            params={
+                "input_artifacts": {
+                    "brief": {
+                        "artifact_id": "art-brief",
+                        "type": "project_brief_md",
+                        "content": "# 字节AI比赛复盘\n\n## 背景\n- 真实生成内容\n",
+                    }
+                },
+            },
+        )
+    )
+
+    assert result.success is True, result.error
+    payload = result.artifact_payload
+    assert payload is not None
+    spec = payload["content"]
+    assert spec["title"] == "字节AI比赛复盘"
+    assert spec["slides"][0]["title"] == "字节AI比赛复盘"
+    assert "Untitled" not in payload["title"]
+
+
+@pytest.mark.asyncio
+async def test_render_docx_produces_real_docx_zip() -> None:
+    import io
+    import zipfile
+
+    registry = SkillRegistry()
+    register_real_chain_skills(registry, feishu_client=None, artifact_reader=None)
+
+    result = await registry.invoke(
+        SkillInvocation(
+            skill_name="real.doc.render_docx",
+            params={
+                "title": "产品方案",
+                "input_artifacts": {
+                    "brief": {
+                        "artifact_id": "art-brief",
+                        "type": "project_brief_md",
+                        "content": "# 产品方案\n\n## 目标\n- 完成真实 Word 生成\n",
+                    }
+                },
+            },
+        )
+    )
+
+    assert result.success is True, result.error
+    payload = result.artifact_payload
+    assert payload is not None
+    docx_bytes = payload["content"]
+    assert docx_bytes[:2] == b"PK"
+    assert payload["title"] == "产品方案.docx"
+    assert payload["metadata"]["renderer"] == "docx-ooxml"
+    with zipfile.ZipFile(io.BytesIO(docx_bytes)) as zf:
+        names = zf.namelist()
+        assert "[Content_Types].xml" in names
+        document_xml = zf.read("word/document.xml").decode("utf-8")
+    assert "产品方案" in document_xml
+    assert "完成真实 Word 生成" in document_xml
+
+
+@pytest.mark.asyncio
 async def test_render_pptx_produces_real_zip_pptx() -> None:
     """真实链路应输出一个合法的 zip/PPTX 字节流，而非 PPTX_STUB。"""
     import io
@@ -376,6 +444,7 @@ async def test_render_pptx_produces_real_zip_pptx() -> None:
     # 3) metadata 不应是 stub
     assert payload["metadata"]["is_stub"] is False
     assert payload["metadata"]["renderer"] == "python-pptx"
+    assert payload["metadata"]["theme"] == "agent_loop_v1"
     assert result.output["is_stub"] is False
 
 

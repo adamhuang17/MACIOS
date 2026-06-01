@@ -204,6 +204,7 @@ class ArtifactType(StrEnum):
     PROJECT_BRIEF_MD = "project_brief_md"
     SLIDE_SPEC_JSON = "slide_spec_json"
     PPTX = "pptx"
+    DOCX = "docx"
     FEISHU_DOC = "feishu_doc"
     FEISHU_SLIDE = "feishu_slide"
     DRIVE_FILE = "drive_file"
