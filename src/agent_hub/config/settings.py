@@ -79,6 +79,9 @@ class Settings(BaseSettings):
 
     # ── 记忆管理（Mem0 式） ───────────────────────────
     memory_conflict_threshold: float = 0.85
+    agent_loop_memory_enabled: bool = True
+    agent_loop_memory_session_tokens: int = 1200
+    agent_loop_memory_persistent_tokens: int = 1200
 
     # ── CORS（逗号分隔） ──────────────────────────────
     cors_origins: str = "http://localhost:3000"

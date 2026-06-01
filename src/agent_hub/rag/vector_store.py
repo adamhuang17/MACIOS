@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -11,8 +13,24 @@ import structlog
 
 if TYPE_CHECKING:
     from psycopg_pool import AsyncConnectionPool
+    from psycopg_pool import ConnectionPool
 
 logger = structlog.get_logger(__name__)
+
+
+def _ensure_windows_selector_event_loop_policy() -> None:
+    """psycopg async connections require SelectorEventLoop on Windows."""
+    if sys.platform != "win32":
+        return
+    proactor_cls = getattr(asyncio, "WindowsProactorEventLoopPolicy", None)
+    selector_factory = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+    if proactor_cls is None or selector_factory is None:
+        return
+    if isinstance(asyncio.get_event_loop_policy(), proactor_cls):
+        asyncio.set_event_loop_policy(selector_factory())
+
+
+_ensure_windows_selector_event_loop_policy()
 
 
 @dataclass
@@ -67,6 +85,8 @@ class VectorStore:
         self._min_pool_size = min_pool_size
         self._max_pool_size = max_pool_size
         self._pool: AsyncConnectionPool | None = None
+        self._sync_pool: ConnectionPool | None = None
+        self._use_sync_driver = sys.platform == "win32"
         self._schema_ready = False
 
     async def _get_pool(self) -> AsyncConnectionPool:
@@ -84,9 +104,27 @@ class VectorStore:
         await self._pool.open()
         return self._pool
 
+    def _get_sync_pool(self) -> ConnectionPool:
+        if self._sync_pool is not None:
+            return self._sync_pool
+
+        import psycopg_pool
+
+        self._sync_pool = psycopg_pool.ConnectionPool(
+            self._pg_dsn,
+            min_size=self._min_pool_size,
+            max_size=self._max_pool_size,
+            open=False,
+        )
+        self._sync_pool.open()
+        return self._sync_pool
+
     async def ensure_schema(self) -> None:
         """Create or migrate the pgvector schema."""
         if self._schema_ready:
+            return
+        if self._use_sync_driver:
+            await asyncio.to_thread(self._ensure_schema_sync)
             return
         pool = await self._get_pool()
         async with pool.connection() as conn:
@@ -233,6 +271,125 @@ class VectorStore:
             )
             self._schema_ready = True
 
+    def _ensure_schema_sync(self) -> None:
+        """Synchronous schema setup used on Windows event loops."""
+        if self._schema_ready:
+            return
+        pool = self._get_sync_pool()
+        with pool.connection() as conn:
+            conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.DOCUMENT_TABLE} (
+                    id           BIGSERIAL PRIMARY KEY,
+                    user_id      TEXT NOT NULL,
+                    namespace    TEXT NOT NULL,
+                    document_id  TEXT NOT NULL,
+                    doc_type     TEXT NOT NULL DEFAULT 'text',
+                    metadata     JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                    content_hash TEXT NOT NULL DEFAULT '',
+                    chunk_count  INTEGER NOT NULL DEFAULT 0,
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (user_id, namespace, document_id)
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.CHUNK_TABLE} (
+                    id           BIGSERIAL PRIMARY KEY,
+                    user_id      TEXT NOT NULL,
+                    namespace    TEXT NOT NULL,
+                    document_id  TEXT NOT NULL,
+                    chunk_index  INTEGER NOT NULL DEFAULT 0,
+                    content      TEXT NOT NULL,
+                    content_hash TEXT NOT NULL DEFAULT '',
+                    metadata     JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                    embedding    vector({self._dimension}) NOT NULL,
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            for statement in (
+                f"ALTER TABLE {self.CHUNK_TABLE} ADD COLUMN IF NOT EXISTS document_id TEXT",
+                f"""
+                ALTER TABLE {self.CHUNK_TABLE}
+                ADD COLUMN IF NOT EXISTS chunk_index INTEGER NOT NULL DEFAULT 0
+                """,
+                f"""
+                ALTER TABLE {self.CHUNK_TABLE}
+                ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT ''
+                """,
+                f"""
+                ALTER TABLE {self.CHUNK_TABLE}
+                ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                """,
+                f"UPDATE {self.CHUNK_TABLE} SET document_id = namespace WHERE document_id IS NULL",
+                f"""
+                WITH ranked AS (
+                    SELECT id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY user_id, namespace, document_id
+                               ORDER BY id
+                           ) - 1 AS rn
+                    FROM {self.CHUNK_TABLE}
+                )
+                UPDATE {self.CHUNK_TABLE} AS chunk
+                SET chunk_index = ranked.rn
+                FROM ranked
+                WHERE chunk.id = ranked.id
+                  AND chunk.chunk_index = 0
+                """,
+                f"ALTER TABLE {self.CHUNK_TABLE} ALTER COLUMN document_id SET NOT NULL",
+                f"""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_{self.CHUNK_TABLE}_uniq
+                ON {self.CHUNK_TABLE} (user_id, namespace, document_id, chunk_index)
+                """,
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{self.CHUNK_TABLE}_user_ns
+                ON {self.CHUNK_TABLE} (user_id, namespace)
+                """,
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{self.CHUNK_TABLE}_doc
+                ON {self.CHUNK_TABLE} (user_id, namespace, document_id)
+                """,
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{self.CHUNK_TABLE}_metadata_gin
+                ON {self.CHUNK_TABLE} USING gin (metadata)
+                """,
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{self.DOCUMENT_TABLE}_user_ns
+                ON {self.DOCUMENT_TABLE} (user_id, namespace)
+                """,
+            ):
+                conn.execute(statement)
+            if self._dimension <= 2000:
+                conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS idx_{self.CHUNK_TABLE}_hnsw
+                    ON {self.CHUNK_TABLE}
+                    USING hnsw (embedding vector_cosine_ops)
+                    WITH (m = 16, ef_construction = 200)
+                    """
+                )
+            else:
+                logger.warning(
+                    "vector_store_hnsw_skipped",
+                    dimension=self._dimension,
+                    reason="HNSW only supports <=2000 dimensions; using sequential scan",
+                )
+            conn.commit()
+        logger.info(
+            "vector_store_schema_ensured",
+            chunk_table=self.CHUNK_TABLE,
+            document_table=self.DOCUMENT_TABLE,
+            dimension=self._dimension,
+            driver="sync",
+        )
+        self._schema_ready = True
+
     async def upsert(
         self,
         user_id: str,
@@ -279,6 +436,18 @@ class VectorStore:
             return 0
         if len(chunks) != len(embeddings):
             raise ValueError("chunks and embeddings must have the same length")
+        if self._use_sync_driver:
+            return await asyncio.to_thread(
+                self._upsert_document_sync,
+                user_id,
+                namespace,
+                document_id,
+                chunks,
+                embeddings,
+                doc_type,
+                metadata,
+                replace,
+            )
 
         pool = await self._get_pool()
         metadata = metadata or {}
@@ -378,6 +547,113 @@ class VectorStore:
         )
         return len(chunks)
 
+    def _upsert_document_sync(
+        self,
+        user_id: str,
+        namespace: str,
+        document_id: str,
+        chunks: list[ChunkDoc],
+        embeddings: list[list[float]],
+        doc_type: str,
+        metadata: dict[str, Any] | None,
+        replace: bool,
+    ) -> int:
+        pool = self._get_sync_pool()
+        metadata = metadata or {}
+        doc_hash = self._hash_text("\n\n".join(chunk.content for chunk in chunks))
+
+        with pool.connection() as conn:
+            if replace:
+                conn.execute(
+                    f"""
+                    DELETE FROM {self.CHUNK_TABLE}
+                    WHERE user_id = %s AND namespace = %s AND document_id = %s
+                    """,
+                    (user_id, namespace, document_id),
+                )
+            conn.execute(
+                f"""
+                INSERT INTO {self.DOCUMENT_TABLE}
+                    (
+                        user_id,
+                        namespace,
+                        document_id,
+                        doc_type,
+                        metadata,
+                        content_hash,
+                        chunk_count
+                    )
+                VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s)
+                ON CONFLICT (user_id, namespace, document_id)
+                DO UPDATE SET
+                    doc_type = EXCLUDED.doc_type,
+                    metadata = EXCLUDED.metadata,
+                    content_hash = EXCLUDED.content_hash,
+                    chunk_count = EXCLUDED.chunk_count,
+                    updated_at = NOW()
+                """,
+                (
+                    user_id,
+                    namespace,
+                    document_id,
+                    doc_type,
+                    self._json(metadata),
+                    doc_hash,
+                    len(chunks),
+                ),
+            )
+            with conn.cursor() as cur:
+                for chunk, embedding in zip(chunks, embeddings, strict=True):
+                    self._validate_embedding(embedding)
+                    chunk_doc_id = chunk.document_id or document_id
+                    content_hash = chunk.content_hash or self._hash_text(chunk.content)
+                    chunk_metadata = {
+                        **metadata,
+                        **chunk.metadata,
+                        "namespace": namespace,
+                        "document_id": chunk_doc_id,
+                        "chunk_index": chunk.chunk_index,
+                        "content_hash": content_hash,
+                    }
+                    cur.execute(
+                        f"""
+                        INSERT INTO {self.CHUNK_TABLE}
+                            (
+                                user_id, namespace, document_id, chunk_index,
+                                content, content_hash, metadata, embedding
+                            )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::vector)
+                        ON CONFLICT (user_id, namespace, document_id, chunk_index)
+                        DO UPDATE SET
+                            content = EXCLUDED.content,
+                            content_hash = EXCLUDED.content_hash,
+                            metadata = EXCLUDED.metadata,
+                            embedding = EXCLUDED.embedding,
+                            updated_at = NOW()
+                        """,
+                        (
+                            user_id,
+                            namespace,
+                            chunk_doc_id,
+                            chunk.chunk_index,
+                            chunk.content,
+                            content_hash,
+                            self._json(chunk_metadata),
+                            self._format_vector(embedding),
+                        ),
+                    )
+            conn.commit()
+        logger.info(
+            "vector_store_upsert",
+            user_id=user_id,
+            namespace=namespace,
+            document_id=document_id,
+            count=len(chunks),
+            replace=replace,
+            driver="sync",
+        )
+        return len(chunks)
+
     async def search_dense(
         self,
         query_embedding: list[float],
@@ -387,6 +663,14 @@ class VectorStore:
     ) -> list[SearchResult]:
         """Dense cosine search through pgvector."""
         self._validate_embedding(query_embedding)
+        if self._use_sync_driver:
+            return await asyncio.to_thread(
+                self._search_dense_sync,
+                query_embedding,
+                user_id,
+                namespace,
+                top_k,
+            )
         pool = await self._get_pool()
         emb = self._format_vector(query_embedding)
 
@@ -416,6 +700,40 @@ class VectorStore:
             rows = await cur.fetchall()
         return [self._row_to_result(row) for row in rows]
 
+    def _search_dense_sync(
+        self,
+        query_embedding: list[float],
+        user_id: str,
+        namespace: str | None,
+        top_k: int,
+    ) -> list[SearchResult]:
+        pool = self._get_sync_pool()
+        emb = self._format_vector(query_embedding)
+        if namespace is None:
+            sql = f"""
+                SELECT id, content, metadata, namespace, document_id,
+                       1 - (embedding <=> %(emb)s::vector) AS score
+                FROM {self.CHUNK_TABLE}
+                WHERE user_id = %(uid)s
+                ORDER BY embedding <=> %(emb)s::vector
+                LIMIT %(topk)s
+            """
+            params: dict[str, Any] = {"uid": user_id, "emb": emb, "topk": top_k}
+        else:
+            sql = f"""
+                SELECT id, content, metadata, namespace, document_id,
+                       1 - (embedding <=> %(emb)s::vector) AS score
+                FROM {self.CHUNK_TABLE}
+                WHERE user_id = %(uid)s AND namespace = %(ns)s
+                ORDER BY embedding <=> %(emb)s::vector
+                LIMIT %(topk)s
+            """
+            params = {"uid": user_id, "ns": namespace, "emb": emb, "topk": top_k}
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [self._row_to_result(row) for row in rows]
+
     async def search_dense_raw(
         self,
         query_embedding: list[float],
@@ -435,6 +753,14 @@ class VectorStore:
         limit: int = 20_000,
     ) -> list[ChunkDoc]:
         """Load chunks for sparse-index rebuilding."""
+        if self._use_sync_driver:
+            return await asyncio.to_thread(
+                self._list_chunks_sync,
+                user_id,
+                namespace,
+                document_id,
+                limit,
+            )
         pool = await self._get_pool()
         clauses = ["user_id = %(uid)s"]
         params: dict[str, Any] = {"uid": user_id, "limit": limit}
@@ -476,8 +802,56 @@ class VectorStore:
             )
         return chunks
 
+    def _list_chunks_sync(
+        self,
+        user_id: str,
+        namespace: str | None,
+        document_id: str | None,
+        limit: int,
+    ) -> list[ChunkDoc]:
+        pool = self._get_sync_pool()
+        clauses = ["user_id = %(uid)s"]
+        params: dict[str, Any] = {"uid": user_id, "limit": limit}
+        if namespace is not None:
+            clauses.append("namespace = %(ns)s")
+            params["ns"] = namespace
+        if document_id is not None:
+            clauses.append("document_id = %(doc)s")
+            params["doc"] = document_id
+        where_clause = " AND ".join(clauses)
+        sql = f"""
+            SELECT id, content, metadata, namespace, document_id, chunk_index, content_hash
+            FROM {self.CHUNK_TABLE}
+            WHERE {where_clause}
+            ORDER BY namespace, document_id, chunk_index
+            LIMIT %(limit)s
+        """
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        chunks: list[ChunkDoc] = []
+        for row in rows:
+            metadata = self._parse_metadata(row[2])
+            metadata.setdefault("chunk_id", row[0])
+            metadata.setdefault("namespace", row[3])
+            metadata.setdefault("document_id", row[4])
+            metadata.setdefault("chunk_index", row[5])
+            metadata.setdefault("content_hash", row[6])
+            chunks.append(
+                ChunkDoc(
+                    content=row[1],
+                    metadata=metadata,
+                    chunk_index=int(row[5]),
+                    document_id=row[4],
+                    content_hash=row[6],
+                )
+            )
+        return chunks
+
     async def list_namespaces(self, user_id: str) -> list[str]:
         """Return namespaces that contain chunks for one user."""
+        if self._use_sync_driver:
+            return await asyncio.to_thread(self._list_namespaces_sync, user_id)
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor() as cur:
             await cur.execute(
@@ -492,6 +866,21 @@ class VectorStore:
             rows = await cur.fetchall()
         return [str(row[0]) for row in rows]
 
+    def _list_namespaces_sync(self, user_id: str) -> list[str]:
+        pool = self._get_sync_pool()
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT DISTINCT namespace
+                FROM {self.CHUNK_TABLE}
+                WHERE user_id = %s
+                ORDER BY namespace
+                """,
+                (user_id,),
+            )
+            rows = cur.fetchall()
+        return [str(row[0]) for row in rows]
+
     async def delete_by_document(
         self,
         user_id: str,
@@ -499,6 +888,13 @@ class VectorStore:
         document_id: str,
     ) -> int:
         """Delete one logical document and its chunks."""
+        if self._use_sync_driver:
+            return await asyncio.to_thread(
+                self._delete_by_document_sync,
+                user_id,
+                namespace,
+                document_id,
+            )
         pool = await self._get_pool()
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -527,8 +923,48 @@ class VectorStore:
         )
         return deleted
 
+    def _delete_by_document_sync(
+        self,
+        user_id: str,
+        namespace: str,
+        document_id: str,
+    ) -> int:
+        pool = self._get_sync_pool()
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                DELETE FROM {self.CHUNK_TABLE}
+                WHERE user_id = %s AND namespace = %s AND document_id = %s
+                """,
+                (user_id, namespace, document_id),
+            )
+            deleted = cur.rowcount or 0
+            cur.execute(
+                f"""
+                DELETE FROM {self.DOCUMENT_TABLE}
+                WHERE user_id = %s AND namespace = %s AND document_id = %s
+                """,
+                (user_id, namespace, document_id),
+            )
+            conn.commit()
+        logger.info(
+            "vector_store_delete_document",
+            user_id=user_id,
+            namespace=namespace,
+            document_id=document_id,
+            deleted=deleted,
+            driver="sync",
+        )
+        return deleted
+
     async def delete_by_namespace(self, user_id: str, namespace: str) -> int:
         """Delete all chunks/documents in a namespace."""
+        if self._use_sync_driver:
+            return await asyncio.to_thread(
+                self._delete_by_namespace_sync,
+                user_id,
+                namespace,
+            )
         pool = await self._get_pool()
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -550,8 +986,32 @@ class VectorStore:
         )
         return deleted
 
+    def _delete_by_namespace_sync(self, user_id: str, namespace: str) -> int:
+        pool = self._get_sync_pool()
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"DELETE FROM {self.CHUNK_TABLE} WHERE user_id = %s AND namespace = %s",
+                (user_id, namespace),
+            )
+            deleted = cur.rowcount or 0
+            cur.execute(
+                f"DELETE FROM {self.DOCUMENT_TABLE} WHERE user_id = %s AND namespace = %s",
+                (user_id, namespace),
+            )
+            conn.commit()
+        logger.info(
+            "vector_store_delete_namespace",
+            user_id=user_id,
+            namespace=namespace,
+            deleted=deleted,
+            driver="sync",
+        )
+        return deleted
+
     async def healthcheck(self) -> dict[str, Any]:
         """Check PostgreSQL connectivity and pgvector availability."""
+        if self._use_sync_driver:
+            return await asyncio.to_thread(self._healthcheck_sync)
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor() as cur:
             await cur.execute("SELECT 1")
@@ -568,10 +1028,30 @@ class VectorStore:
             "document_table": self.DOCUMENT_TABLE,
         }
 
+    def _healthcheck_sync(self) -> dict[str, Any]:
+        pool = self._get_sync_pool()
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+            cur.execute(
+                "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
+            )
+            version_row = cur.fetchone()
+        return {
+            "ok": True,
+            "dimension": self._dimension,
+            "pgvector": version_row[0] if version_row else None,
+            "chunk_table": self.CHUNK_TABLE,
+            "document_table": self.DOCUMENT_TABLE,
+        }
+
     async def close(self) -> None:
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
+        if self._sync_pool is not None:
+            await asyncio.to_thread(self._sync_pool.close)
+            self._sync_pool = None
 
     def _validate_embedding(self, embedding: list[float]) -> None:
         if len(embedding) != self._dimension:

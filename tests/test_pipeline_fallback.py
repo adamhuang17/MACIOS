@@ -242,6 +242,48 @@ class TestPipelineFallback:
         pipeline._agents["llm_agent"].run.assert_awaited_once()
 
 
+    @pytest.mark.asyncio
+    async def test_agent_loop_receives_memory_context(
+        self,
+        pipeline: AgentPipeline,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """AgentLoop 主路径应读取 MemoryManager 上下文并注入本轮模型提示。"""
+
+        class FakeAgentLoop:
+            received_memory_context: str | None = None
+
+            def __init__(self, **kwargs) -> None:  # noqa: ANN003
+                self.kwargs = kwargs
+
+            async def run_stream(self, **kwargs):  # noqa: ANN003, ANN202
+                FakeAgentLoop.received_memory_context = kwargs.get("memory_context")
+                yield {"type": "final", "content": "ok"}
+
+        monkeypatch.setattr(
+            "agent_hub.core.pipeline.AgentTurnLoop",
+            FakeAgentLoop,
+        )
+        pipeline._memory.get_context = lambda **kwargs: "历史偏好：正式中文 PPT"
+
+        task_input = TaskInput(
+            trace_id="trace-memory",
+            user_context=UserContext(user_id="u1", role="user"),
+            source_context=SourceContext(
+                channel="feishu",
+                chat_id="oc_memory",
+                chat_type=SourceChatType.DIRECT,
+                sender_id="u1",
+            ),
+            raw_message="继续做 PPT",
+        )
+
+        chunks = [chunk async for chunk in pipeline.run_stream(task_input)]
+
+        assert chunks[-1]["content"] == "ok"
+        assert FakeAgentLoop.received_memory_context == "历史偏好：正式中文 PPT"
+
+
 class TestRouterPromptEnsuresSubtask:
     """验证 Router prompt 包含强制子任务生成的规则。"""
 

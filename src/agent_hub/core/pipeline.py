@@ -453,6 +453,25 @@ class AgentPipeline:
     def _resolve_source_context(task_input: TaskInput) -> SourceContext:
         return task_input.source_context
 
+    def _get_agent_loop_memory_context(self, *, session_id: str, user_id: str) -> str:
+        """Return bounded memory context for the primary AgentLoop prompt."""
+        if not getattr(self._settings, "agent_loop_memory_enabled", True):
+            return ""
+        try:
+            return self._memory.get_context(
+                session_id=session_id,
+                user_id=user_id,
+                session_tokens=int(
+                    getattr(self._settings, "agent_loop_memory_session_tokens", 1200),
+                ),
+                persistent_tokens=int(
+                    getattr(self._settings, "agent_loop_memory_persistent_tokens", 1200),
+                ),
+            ).strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("agent_loop_memory_context_failed", error=str(exc))
+            return ""
+
     @staticmethod
     def _guard_blocked_response(guard_result: GuardResult) -> str:
         return (
@@ -899,6 +918,10 @@ class AgentPipeline:
             return
 
         session_id = prepared.binding.session_key
+        memory_context = self._get_agent_loop_memory_context(
+            session_id=session_id,
+            user_id=task_input.user_context.user_id,
+        )
         loop = AgentTurnLoop(
             settings=self._settings,
             tools=self._build_agent_loop_tools(
@@ -916,6 +939,7 @@ class AgentPipeline:
             source_context=prepared.source_context,
             session_id=session_id,
             trace_id=trace_id,
+            memory_context=memory_context,
         ):
             content = chunk.get("content")
             if chunk.get("type") in {"token", "final"} and content:
@@ -931,7 +955,7 @@ class AgentPipeline:
                 tags=["user_request", "agent_loop", "stream"],
             )
             if collected_outputs:
-                self._memory.add(
+                await self._memory.add_with_conflict_check(
                     session_id=session_id,
                     user_id=task_input.user_context.user_id,
                     content="".join(collected_outputs),
