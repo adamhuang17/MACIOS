@@ -96,6 +96,23 @@ def build_pilot_router(runtime: PilotRuntime) -> APIRouter:
             raise HTTPException(status_code=404, detail=f"unknown task: {task_id}")
         return TaskDetailView.model_validate(detail, from_attributes=True)
 
+    @router.delete("/tasks/{task_id}", status_code=204)
+    async def delete_task(
+        task_id: str,
+        actor_id: str = Query(default="dashboard-user"),  # noqa: B008
+    ) -> Response:
+        try:
+            await runtime.commands.delete_task(task_id, actor_id=actor_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CommandError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except IllegalTransition as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ConcurrencyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return Response(status_code=204)
+
     @router.post("/tasks/{task_id}/steps/{step_id}/retry",
                  response_model=SubmitTaskResponse)
     async def retry_step(
@@ -179,6 +196,21 @@ def build_pilot_router(runtime: PilotRuntime) -> APIRouter:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return ResumeTaskResponse(**payload)
 
+    @router.post("/tasks/{task_id}/pause", response_model=ResumeTaskResponse)
+    async def pause_task(
+        task_id: str,
+        actor_id: str = Query(default="dashboard-user"),  # noqa: B008
+    ) -> ResumeTaskResponse:
+        try:
+            payload = await runtime.commands.pause_task(task_id, actor_id=actor_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CommandError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ConcurrencyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return ResumeTaskResponse(**payload)
+
     # ── workspaces ────────────────────────────────
 
     @router.get("/workspaces", response_model=list[WorkspaceSummaryView])
@@ -198,6 +230,7 @@ def build_pilot_router(runtime: PilotRuntime) -> APIRouter:
             )
         # 简单聚合
         tasks = await runtime.repository.list_tasks(workspace_id=workspace_id)
+        tasks = [t for t in tasks if not t.metadata.get("deleted_at")]
         events = await runtime.event_store.list_events(
             workspace_id, since_sequence=0, limit=10_000,
         )

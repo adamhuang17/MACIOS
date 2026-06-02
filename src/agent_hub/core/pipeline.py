@@ -29,6 +29,7 @@ Example::
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections import defaultdict
 from collections.abc import AsyncGenerator
@@ -36,6 +37,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from openai import AsyncOpenAI
 
 from agent_hub.agents import (
     LLMAgent,
@@ -75,6 +77,17 @@ if TYPE_CHECKING:
     from agent_hub.core.cache import CacheLayer
 
 logger = structlog.get_logger(__name__)
+
+_FAST_GREETING_EN = {"hello", "hi", "hey", "yo"}
+_FAST_GREETING_ZH = {"你好", "您好", "在吗", "嗨", "哈喽", "哈罗"}
+_ACTION_TRIGGER_RE = re.compile(
+    r"ppt|powerpoint|slides?|deck|word|docx|document|drive|"
+    r"飞书|文档|文件|幻灯|演示|报告|生成|制作|创建|上传|分享|发送|"
+    r"任务|进度|状态|审批|恢复|暂停|删除|重试|继续|查询|做一份|帮我做|"
+    r"帮我生成|帮我写|请制作|请生成",
+    re.IGNORECASE,
+)
+_FAST_TEXT_STRIP_RE = re.compile(r"[\s,，。.!！?？~～、:：;；]+")
 
 
 @dataclass(slots=True)
@@ -151,6 +164,10 @@ class AgentPipeline:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._pilot_runtime: object | None = None
+        self._agent_loop_client = AsyncOpenAI(
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+        )
 
         # 路由器
         self._router = DecisionRouter(settings=settings)
@@ -452,6 +469,42 @@ class AgentPipeline:
     @staticmethod
     def _resolve_source_context(task_input: TaskInput) -> SourceContext:
         return task_input.source_context
+
+    @staticmethod
+    def _fast_reply_for_message(message: str) -> str | None:
+        normalized = _FAST_TEXT_STRIP_RE.sub("", message.strip().lower())
+        if not normalized or len(normalized) > 16:
+            return None
+        if _ACTION_TRIGGER_RE.search(message):
+            return None
+        if normalized in _FAST_GREETING_EN:
+            return "Hello! How can I help?"
+        if normalized in _FAST_GREETING_ZH:
+            return "你好！有什么可以帮你？"
+        return None
+
+    @staticmethod
+    def _should_enable_agent_loop_tools(message: str) -> bool:
+        return bool(_ACTION_TRIGGER_RE.search(message))
+
+    def _get_agent_loop_memory_context(self, *, session_id: str, user_id: str) -> str:
+        """Return bounded memory context for the primary AgentLoop prompt."""
+        if not getattr(self._settings, "agent_loop_memory_enabled", True):
+            return ""
+        try:
+            return self._memory.get_context(
+                session_id=session_id,
+                user_id=user_id,
+                session_tokens=int(
+                    getattr(self._settings, "agent_loop_memory_session_tokens", 1200),
+                ),
+                persistent_tokens=int(
+                    getattr(self._settings, "agent_loop_memory_persistent_tokens", 1200),
+                ),
+            ).strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("agent_loop_memory_context_failed", error=str(exc))
+            return ""
 
     @staticmethod
     def _guard_blocked_response(guard_result: GuardResult) -> str:
@@ -866,6 +919,81 @@ class AgentPipeline:
             "tasks": [task.model_dump() for task in tasks],
         }
 
+    def _remember_fast_reply(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        user_message: str,
+        reply: str,
+    ) -> None:
+        try:
+            self._memory.add(
+                session_id=session_id,
+                user_id=user_id,
+                content=f"User: {user_message}",
+                memory_type="short_term",
+                tags=["user_request", "agent_loop", "fast_reply"],
+            )
+            self._memory.add(
+                session_id=session_id,
+                user_id=user_id,
+                content=f"Assistant: {reply}",
+                memory_type="short_term",
+                tags=["assistant_reply", "agent_loop", "fast_reply"],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("fast_reply_memory_save_failed", error=str(exc))
+
+    def _schedule_stream_memory_save(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        user_message: str,
+        collected_outputs: list[str],
+    ) -> None:
+        task = asyncio.create_task(
+            self._save_stream_memory(
+                session_id=session_id,
+                user_id=user_id,
+                user_message=user_message,
+                collected_outputs=collected_outputs,
+            )
+        )
+
+        def _on_done(done: asyncio.Task[None]) -> None:
+            try:
+                done.result()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("stream_memory_save_failed", error=str(exc))
+
+        task.add_done_callback(_on_done)
+
+    async def _save_stream_memory(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        user_message: str,
+        collected_outputs: list[str],
+    ) -> None:
+        self._memory.add(
+            session_id=session_id,
+            user_id=user_id,
+            content=f"User: {user_message}",
+            memory_type="short_term",
+            tags=["user_request", "agent_loop", "stream"],
+        )
+        if collected_outputs:
+            await self._memory.add_with_conflict_check(
+                session_id=session_id,
+                user_id=user_id,
+                content="".join(collected_outputs),
+                memory_type="long_term",
+                tags=["execution_summary", "agent_loop", "stream"],
+            )
+
     # ── 流式入口 ─────────────────────────────────────
 
     async def run_stream(
@@ -886,7 +1014,14 @@ class AgentPipeline:
             and ``error``.
         """
         trace_id = task_input.trace_id or get_current_trace_id()
+        turn_start = time.monotonic()
         prepared = await self._prepare_agent_loop_execution(task_input, trace_id)
+        logger.info(
+            "turn.latency",
+            stage="prepare",
+            duration_ms=self._elapsed_ms(turn_start),
+            trace_id=trace_id,
+        )
         if prepared.blocked_response is not None:
             yield {
                 "type": "blocked",
@@ -899,47 +1034,82 @@ class AgentPipeline:
             return
 
         session_id = prepared.binding.session_key
-        loop = AgentTurnLoop(
-            settings=self._settings,
-            tools=self._build_agent_loop_tools(
+        fast_reply = self._fast_reply_for_message(task_input.raw_message)
+        if fast_reply is not None:
+            self._remember_fast_reply(
+                session_id=session_id,
+                user_id=task_input.user_context.user_id,
+                user_message=task_input.raw_message,
+                reply=fast_reply,
+            )
+            logger.info(
+                "turn.fast_reply",
+                trace_id=trace_id,
+                total_duration_ms=self._elapsed_ms(turn_start),
+            )
+            yield {"type": "final", "content": fast_reply}
+            return
+
+        memory_start = time.monotonic()
+        memory_context = self._get_agent_loop_memory_context(
+            session_id=session_id,
+            user_id=task_input.user_context.user_id,
+        )
+        logger.info(
+            "turn.latency",
+            stage="memory_context",
+            duration_ms=self._elapsed_ms(memory_start),
+            trace_id=trace_id,
+        )
+        tools = (
+            self._build_agent_loop_tools(
                 task_input,
                 prepared.binding,
                 prepared.guard_result,
-            ),
+            )
+            if self._should_enable_agent_loop_tools(task_input.raw_message)
+            else []
+        )
+        logger.info(
+            "turn.agent_loop_tools",
+            enabled=bool(tools),
+            count=len(tools),
+            trace_id=trace_id,
+        )
+        loop = AgentTurnLoop(
+            settings=self._settings,
+            tools=tools,
+            client=self._agent_loop_client,
             max_rounds=self._settings.react_max_rounds,
         )
 
         collected_outputs: list[str] = []
+        loop_start = time.monotonic()
         async for chunk in loop.run_stream(
             task_message=task_input.raw_message,
             user_context=task_input.user_context,
             source_context=prepared.source_context,
             session_id=session_id,
             trace_id=trace_id,
+            memory_context=memory_context,
         ):
             content = chunk.get("content")
             if chunk.get("type") in {"token", "final"} and content:
                 collected_outputs.append(str(content))
             yield chunk
-
-        try:
-            self._memory.add(
-                session_id=session_id,
-                user_id=task_input.user_context.user_id,
-                content=f"User: {task_input.raw_message}",
-                memory_type="short_term",
-                tags=["user_request", "agent_loop", "stream"],
-            )
-            if collected_outputs:
-                self._memory.add(
-                    session_id=session_id,
-                    user_id=task_input.user_context.user_id,
-                    content="".join(collected_outputs),
-                    memory_type="long_term",
-                    tags=["execution_summary", "agent_loop", "stream"],
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("stream_memory_save_failed", error=str(exc))
+        logger.info(
+            "turn.latency",
+            stage="agent_loop",
+            duration_ms=self._elapsed_ms(loop_start),
+            total_duration_ms=self._elapsed_ms(turn_start),
+            trace_id=trace_id,
+        )
+        self._schedule_stream_memory_save(
+            session_id=session_id,
+            user_id=task_input.user_context.user_id,
+            user_message=task_input.raw_message,
+            collected_outputs=collected_outputs,
+        )
 
     # ── 非流式兼容入口 ───────────────────────────────
 

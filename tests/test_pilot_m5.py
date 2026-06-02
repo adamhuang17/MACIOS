@@ -44,6 +44,26 @@ def test_runtime_gateway_uses_real_chain_skill_mode() -> None:
         asyncio.run(runtime.aclose())
 
 
+def test_runtime_uses_llm_brief_generator_when_configured() -> None:
+    from agent_hub.api.pilot_runtime import build_pilot_runtime
+    from agent_hub.config.settings import Settings
+
+    runtime = build_pilot_runtime(
+        Settings(
+            llm_api_key="sk-test",
+            pilot_store_path="",
+            pilot_demo_mode=True,
+            pilot_use_real_gateway=False,
+            pilot_use_real_chain=True,
+            feishu_enabled=False,
+        ),
+    )
+    try:
+        assert runtime.brief_generator.__class__.__name__ == "OpenAICompatibleBriefGenerator"
+    finally:
+        asyncio.run(runtime.aclose())
+
+
 # ── derive_plan_profile ──────────────────────────────
 
 
@@ -99,8 +119,9 @@ async def test_template_gateway_deck_full_fake() -> None:
 @pytest.mark.asyncio
 async def test_template_gateway_deck_full_real_chain_uses_real_skills() -> None:
     gw = TemplatePlanGateway(skill_mode="real_chain")
+    title = "季度复盘"
     bp = await gw.complex_plan(
-        PlanContext(raw_text="做一份 PPT", requester_id="u1", title="季度复盘"),
+        PlanContext(raw_text="做一份 PPT", requester_id="u1", title=title),
     )
     assert bp.metadata["skill_mode"] == "real_chain"
     by_kind = {s.kind: s.skill_name for s in bp.steps}
@@ -110,6 +131,13 @@ async def test_template_gateway_deck_full_real_chain_uses_real_skills() -> None:
     assert by_kind[PlanStepKind.RENDER_SLIDES] == "real.slide.render_pptx"
     assert by_kind[PlanStepKind.UPLOAD] == "real.drive.upload_share"
     assert by_kind[PlanStepKind.SUMMARIZE] == "feishu.im.send_message"
+    spec = next(s for s in bp.steps if s.ref == "spec")
+    pptx = next(s for s in bp.steps if s.ref == "pptx")
+    upload = next(s for s in bp.steps if s.ref == "share")
+    assert spec.input_params["title"] == title
+    assert pptx.input_params["title"] == title
+    assert upload.input_params["file_name"].endswith(".pptx")
+    assert upload.input_params["file_name"] != "deck.pptx"
 
 
 @pytest.mark.asyncio
@@ -204,13 +232,17 @@ async def test_template_gateway_doc_only_only_two_steps() -> None:
     assert kinds == [
         PlanStepKind.READ_CONTEXT,
         PlanStepKind.GENERATE_DOC,
+        PlanStepKind.GENERATE_DOC,
         PlanStepKind.UPLOAD,
         PlanStepKind.SUMMARIZE,
     ]
+    doc = next(s for s in bp.steps if s.ref == "doc")
+    assert doc.skill_name == "real.doc.render_docx"
+    assert doc.inputs_from == ["brief"]
     upload = next(s for s in bp.steps if s.kind == PlanStepKind.UPLOAD)
     assert upload.skill_name == "real.drive.upload_share"
-    assert upload.input_params.get("file_name", "").endswith(".md")
-    assert upload.inputs_from == ["brief"]
+    assert upload.input_params.get("file_name", "").endswith(".docx")
+    assert upload.inputs_from == ["doc"]
 
 
 @pytest.mark.asyncio

@@ -425,6 +425,92 @@ async def test_execution_blocks_when_no_auto_approve_notifies(
 
 
 @pytest.mark.asyncio
+async def test_pause_request_blocks_before_next_step(
+    commands: PilotCommandService,
+    execution: ExecutionEngine,
+    repo: PilotRepository,
+    registry: SkillRegistry,
+) -> None:
+    calls = {"first": 0, "second": 0}
+    ws, task = _make_task()
+
+    async def first(inv: SkillInvocation) -> SkillResult:
+        calls["first"] += 1
+        await commands.pause_task(task.task_id, actor_id="u1")
+        return SkillResult(skill_name=inv.skill_name, success=True)
+
+    async def second(inv: SkillInvocation) -> SkillResult:
+        calls["second"] += 1
+        return SkillResult(skill_name=inv.skill_name, success=True)
+
+    registry.register(SkillSpec(
+        skill_name="test.pause.first",
+        supports_dry_run=False,
+    ), first)
+    registry.register(SkillSpec(
+        skill_name="test.pause.second",
+        supports_dry_run=False,
+    ), second)
+
+    plan = Plan(
+        workspace_id=ws.workspace_id,
+        task_id=task.task_id,
+        goal="pause before second step",
+        status=PlanStatus.APPROVED,
+    )
+    first_step = PlanStep(
+        workspace_id=ws.workspace_id,
+        task_id=task.task_id,
+        plan_id=plan.plan_id,
+        index=0,
+        title="first",
+        kind=PlanStepKind.READ_CONTEXT,
+        skill_name="test.pause.first",
+    )
+    second_step = PlanStep(
+        workspace_id=ws.workspace_id,
+        task_id=task.task_id,
+        plan_id=plan.plan_id,
+        index=1,
+        title="second",
+        kind=PlanStepKind.SUMMARIZE,
+        skill_name="test.pause.second",
+        depends_on=[first_step.step_id],
+    )
+    plan = plan.model_copy(update={
+        "step_ids": [first_step.step_id, second_step.step_id],
+    })
+
+    from agent_hub.pilot import TaskAction, transition
+    task = task.model_copy(update={"plan_id": plan.plan_id})
+    task = transition(task, TaskAction.START_PLANNING)
+    task = transition(task, TaskAction.REQUEST_APPROVAL)
+    task = transition(task, TaskAction.APPROVE)
+
+    await repo.save(ws, expected_version=None)
+    await repo.save(task, expected_version=None)
+    await repo.save(plan, expected_version=None)
+    await repo.save(first_step, expected_version=None)
+    await repo.save(second_step, expected_version=None)
+
+    result = await execution.run_plan(task, plan)
+
+    assert result.final_status == TaskStatus.BLOCKED
+    assert calls == {"first": 1, "second": 0}
+
+    refreshed_task = await repo.get_task(task.task_id)
+    refreshed_first = await repo.get_step(first_step.step_id)
+    refreshed_second = await repo.get_step(second_step.step_id)
+    assert refreshed_task is not None
+    assert refreshed_first is not None
+    assert refreshed_second is not None
+    assert refreshed_task.metadata["paused_by"] == "u1"
+    assert refreshed_task.metadata["paused_at"]
+    assert refreshed_first.status == PlanStepStatus.SUCCEEDED
+    assert refreshed_second.status == PlanStepStatus.PENDING
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_manual_plan_approval_notifies(
     repo: PilotRepository,
     publisher: PilotEventPublisher,

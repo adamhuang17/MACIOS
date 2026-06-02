@@ -21,7 +21,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
 
 from agent_hub.api.pilot_routes import build_pilot_router
-from agent_hub.api.pilot_runtime import PilotRuntime, build_pilot_runtime
+from agent_hub.api.pilot_runtime import (
+    PilotRuntime,
+    build_pilot_runtime,
+    prewarm_feishu_client,
+)
 from agent_hub.api.rag_routes import build_rag_router
 from agent_hub.config.settings import Settings, get_settings
 from agent_hub.contracts.interaction import InboundRequest
@@ -114,6 +118,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             and _pilot_runtime.feishu_webhook_service is not None
             and _pilot_runtime.feishu_long_conn is not None
         ):
+            await prewarm_feishu_client(_pilot_runtime.feishu_client)
             # 长连接模式：主动向飞书建立 WebSocket，无需公网 webhook
             await _pilot_runtime.feishu_long_conn.start()
             logger.info(

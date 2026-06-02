@@ -119,7 +119,159 @@ def test_unknown_task_returns_404(client: TestClient) -> None:
     assert client.get("/api/pilot/tasks/missing-id").status_code == 404
 
 
+def test_delete_task_hides_from_list_and_detail(client: TestClient) -> None:
+    import asyncio
+
+    handle = _submit(client)
+    task_id = handle["task_id"]
+    workspace_id = handle["workspace_id"]
+
+    resp = client.delete(
+        f"/api/pilot/tasks/{task_id}",
+        params={"actor_id": "tester-1"},
+    )
+    assert resp.status_code == 204, resp.text
+
+    rows = client.get("/api/pilot/tasks").json()
+    assert task_id not in {row["task_id"] for row in rows}
+    assert client.get(f"/api/pilot/tasks/{task_id}").status_code == 404
+
+    runtime = client.app.state.runtime
+
+    async def _read_deleted_marker() -> tuple[str | None, bool]:
+        task = await runtime.repository.get_task(task_id)
+        events = await runtime.event_store.list_events(
+            workspace_id,
+            since_sequence=0,
+            limit=100,
+        )
+        return (
+            task.metadata.get("deleted_by") if task is not None else None,
+            any(
+                event.task_id == task_id
+                and event.payload.get("deleted") is True
+                for event in events
+            ),
+        )
+
+    deleted_by, event_seen = asyncio.new_event_loop().run_until_complete(
+        _read_deleted_marker(),
+    )
+    assert deleted_by == "tester-1"
+    assert event_seen is True
+
+
+def test_delete_unknown_task_returns_404(client: TestClient) -> None:
+    resp = client.delete("/api/pilot/tasks/missing-id")
+    assert resp.status_code == 404
+
+
+def test_delete_running_task_returns_409(client: TestClient) -> None:
+    import asyncio
+
+    from agent_hub.pilot.domain.models import Task, Workspace
+
+    runtime = client.app.state.runtime
+
+    async def _seed_running_task() -> str:
+        ws = Workspace(
+            title="running workspace",
+            source_channel="api",
+            created_by="tester-1",
+        )
+        task = Task(
+            workspace_id=ws.workspace_id,
+            origin_text="running task",
+            requester_id="tester-1",
+            status="running",
+        )
+        await runtime.repository.save(ws, expected_version=None)
+        await runtime.repository.save(task, expected_version=None)
+        return task.task_id
+
+    task_id = asyncio.new_event_loop().run_until_complete(_seed_running_task())
+    resp = client.delete(
+        f"/api/pilot/tasks/{task_id}",
+        params={"actor_id": "tester-1"},
+    )
+    assert resp.status_code == 409
+
+
 # ── 审批 ────────────────────────────────────────────
+
+
+def test_pause_running_task_exposes_action_and_records_request(
+    client: TestClient,
+) -> None:
+    import asyncio
+
+    from agent_hub.pilot.domain.models import Task, Workspace
+
+    runtime = client.app.state.runtime
+
+    async def _seed_running_task() -> tuple[str, str]:
+        ws = Workspace(
+            title="running workspace",
+            source_channel="api",
+            created_by="tester-1",
+        )
+        task = Task(
+            workspace_id=ws.workspace_id,
+            origin_text="running task",
+            requester_id="tester-1",
+            status="running",
+        )
+        await runtime.repository.save(ws, expected_version=None)
+        await runtime.repository.save(task, expected_version=None)
+        return task.task_id, task.workspace_id
+
+    task_id, workspace_id = asyncio.new_event_loop().run_until_complete(
+        _seed_running_task(),
+    )
+
+    detail = client.get(f"/api/pilot/tasks/{task_id}")
+    assert detail.status_code == 200, detail.text
+    assert any(
+        action["type"] == "pause_task"
+        for action in detail.json()["available_actions"]
+    )
+
+    resp = client.post(
+        f"/api/pilot/tasks/{task_id}/pause",
+        params={"actor_id": "tester-1"},
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["task_id"] == task_id
+    assert payload["task_status"] == "running"
+    assert payload["pause_requested"] is True
+
+    async def _read_pause_marker() -> tuple[str | None, bool]:
+        task = await runtime.repository.get_task(task_id)
+        events = await runtime.event_store.list_events(
+            workspace_id,
+            since_sequence=0,
+            limit=100,
+        )
+        return (
+            task.metadata.get("pause_requested_by") if task is not None else None,
+            any(
+                event.task_id == task_id
+                and event.payload.get("pause_requested") is True
+                for event in events
+            ),
+        )
+
+    requested_by, event_seen = asyncio.new_event_loop().run_until_complete(
+        _read_pause_marker(),
+    )
+    assert requested_by == "tester-1"
+    assert event_seen is True
+
+
+def test_pause_unknown_task_returns_404(client: TestClient) -> None:
+    resp = client.post("/api/pilot/tasks/missing-id/pause")
+    assert resp.status_code == 404
 
 
 def _wait_for_pending_approval(

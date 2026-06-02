@@ -632,10 +632,22 @@ async function loadDetail() {
   let d;
   try {
     d = await fetch(`${API}/tasks/${selectedTaskId}`).then(r => {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
+      if (!r.ok) {
+        const err = new Error('HTTP ' + r.status);
+        err.status = r.status;
+        throw err;
+      }
       return r.json();
     });
   } catch (e) {
+    if (e.status === 404) {
+      selectedTaskId = null;
+      if (evtSource) { try { evtSource.close(); } catch {} }
+      document.getElementById('detail').innerHTML =
+        '<div class="empty">任务已删除或不存在。</div>';
+      await loadTasks({force:true});
+      return;
+    }
     document.getElementById('detail').innerHTML =
       `<div class="empty">读取任务失败：${escapeHtml(e.message || e)}</div>`;
     return;
@@ -694,6 +706,9 @@ function currentActivity(d) {
   const t = d.task || {};
   if (t.status === 'succeeded') return null;
   if (t.status === 'failed' || t.status === 'cancelled' || t.status === 'archived') return null;
+  if (t.status === 'running' && t.metadata && t.metadata.pause_requested_at) {
+    return '已收到暂停请求，当前步骤完成后停止';
+  }
   const progress = latestProgressEvent(d);
   if (progress) {
     const kind = progress.payload && progress.payload.kind;
@@ -729,6 +744,18 @@ function renderApprovals(d) {
   if (!pending.length) return '';
   const cards = pending.map(a => {
     const apprId = escapeHtml(a.approval_id);
+    const approverActor = approvalActor(a);
+    const approveArgs = [
+      a.approval_id || '',
+      'approve',
+      approverActor || '',
+    ].map(v => JSON.stringify(v)).join(',');
+    const rejectArgs = [
+      a.approval_id || '',
+      'reject',
+      approverActor || '',
+    ].map(v => JSON.stringify(v)).join(',');
+    const approverLine = formatApprovers(a.approvers || []);
     return `
       <div class="approval-card" style="margin-bottom:10px">
         <div class="pending-title">⚠ 等待你审批 · ${escapeHtml(targetTypeLabel(a.target_type))}</div>
@@ -736,11 +763,12 @@ function renderApprovals(d) {
           申请人 ${escapeHtml(a.requester_id || '—')} ·
           ${escapeHtml(fmtTime(a.created_at))}
         </div>
+        ${approverLine ? `<div class="meta">审批人 ${approverLine}</div>` : ''}
         ${a.reason ? `<div style="margin-top:6px;font-size:13px">${escapeHtml(a.reason)}</div>` : ''}
         ${a.preview ? `<div class="preview">${escapeHtml(a.preview)}</div>` : ''}
         <div class="actions">
-          <button onclick="decide('${apprId}','approve')">✓ 同意</button>
-          <button class="danger" onclick="decide('${apprId}','reject')">✗ 拒绝</button>
+          <button onclick='decide(${approveArgs})'>✓ 同意</button>
+          <button class="danger" onclick='decide(${rejectArgs})'>✗ 拒绝</button>
         </div>
       </div>
     `;
@@ -749,6 +777,17 @@ function renderApprovals(d) {
     <h3 style="margin-bottom:8px;color:var(--warn);text-transform:uppercase;letter-spacing:0.6px">待办审批</h3>
     ${cards}
   </section>`;
+}
+
+function approvalActor(approval) {
+  const approvers = Array.isArray(approval.approvers) ? approval.approvers : [];
+  if (approvers.length) return String(approvers[0] || '').trim();
+  return '';
+}
+
+function formatApprovers(approvers) {
+  if (!Array.isArray(approvers) || !approvers.length) return '';
+  return approvers.map(a => escapeHtml(String(a || ''))).filter(Boolean).join('、');
 }
 
 function targetTypeLabel(t) {
@@ -774,6 +813,12 @@ function renderActions(d) {
     if (a.type === 'resume_task') {
       const label = a.label || '继续执行';
       return `<button class="tiny" onclick="resumeTask('${escapeHtml(a.task_id)}')">${escapeHtml(label)}</button>`;
+    }
+    if (a.type === 'pause_task') {
+      return `<button class="warn tiny" onclick="pauseTask('${escapeHtml(a.task_id)}')">${escapeHtml(a.label || '暂停任务')}</button>`;
+    }
+    if (a.type === 'delete_task') {
+      return `<button class="danger tiny" onclick="deleteTask('${escapeHtml(a.task_id)}')">${escapeHtml(a.label || '删除任务')}</button>`;
     }
     return `<button class="ghost tiny">${escapeHtml(a.type)}</button>`;
   }).join(' ');
@@ -1017,8 +1062,10 @@ function renderEvents(d) {
 }
 
 // ── 操作 ─────────────────────────────────────────
-async function decide(approvalId, decision) {
-  const actor = (document.getElementById('actor').value || 'dashboard-user').trim();
+async function decide(approvalId, decision, actorOverride = '') {
+  const actor = (
+    actorOverride || document.getElementById('actor').value || 'dashboard-user'
+  ).trim();
   try {
     const r = await fetch(`${API}/approvals/${approvalId}/decision`, {
       method: 'POST',
@@ -1065,6 +1112,19 @@ async function recoverFrom(stepId) {
   } catch (e) { toast('恢复失败：' + (e.message || e), 'err'); }
 }
 
+async function pauseTask(taskId) {
+  const actor = (document.getElementById('actor').value || 'dashboard-user').trim();
+  try {
+    const qs = new URLSearchParams({actor_id: actor});
+    const r = await fetch(`${API}/tasks/${taskId}/pause?${qs.toString()}`, {
+      method: 'POST',
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('已请求暂停，当前步骤完成后会停止', 'ok');
+  } catch (e) { toast('暂停失败：' + (e.message || e), 'err'); return; }
+  await loadDetail(); await loadTasks({force:true});
+}
+
 async function resumeTask(taskId) {
   try {
     const r = await fetch(`${API}/tasks/${taskId}/resume`, {method: 'POST'});
@@ -1072,6 +1132,27 @@ async function resumeTask(taskId) {
     toast('已继续执行', 'ok');
   } catch (e) { toast('继续失败：' + (e.message || e), 'err'); return; }
   await loadDetail(); await loadTasks({force:true});
+}
+
+async function deleteTask(taskId) {
+  const actor = (document.getElementById('actor').value || 'dashboard-user').trim();
+  const ok = window.confirm('删除后任务会从列表中隐藏，审计事件和成果数据仍会保留。确认删除？');
+  if (!ok) return;
+  try {
+    const qs = new URLSearchParams({actor_id: actor});
+    const r = await fetch(`${API}/tasks/${taskId}?${qs.toString()}`, {
+      method: 'DELETE',
+    });
+    if (!r.ok) throw new Error(await r.text());
+    if (evtSource) { try { evtSource.close(); } catch {} }
+    selectedTaskId = null;
+    document.getElementById('detail').innerHTML =
+      '<div class="empty">任务已删除。</div>';
+    toast('任务已删除', 'ok');
+    await loadTasks({force:true});
+  } catch (e) {
+    toast('删除失败：' + (e.message || e), 'err');
+  }
 }
 
 // ── SSE 实时事件 ─────────────────────────────────

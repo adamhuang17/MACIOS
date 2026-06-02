@@ -15,9 +15,13 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
+from agent_hub.core.openai_compat import provider_extra_body
 from agent_hub.pilot.domain.enums import ArtifactType
 from agent_hub.pilot.skills.registry import (
     SkillInvocation,
@@ -25,6 +29,8 @@ from agent_hub.pilot.skills.registry import (
     SkillResult,
     SkillSpec,
 )
+
+logger = logging.getLogger(__name__)
 
 # ── 协议 ─────────────────────────────────────────────
 
@@ -120,6 +126,140 @@ class TemplateBriefGenerator:
             head, _, _tail = base_brief.partition(marker)
             return head.rstrip() + revision_block
         return base_brief.rstrip() + "\n" + revision_block
+
+
+class OpenAICompatibleBriefGenerator:
+    """LLM-backed BriefGenerator with deterministic template fallback."""
+
+    name = "openai_compatible_brief_generator"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+        timeout: float = 30.0,
+        fallback: BriefGenerator | None = None,
+    ) -> None:
+        self._api_key = api_key
+        self._base_url = base_url
+        self._model = model
+        self._timeout = timeout
+        self._fallback = fallback or TemplateBriefGenerator()
+
+    async def generate(
+        self,
+        *,
+        title: str,
+        context_bundle: dict[str, Any] | str | None,
+        language: str = "zh-CN",
+    ) -> str:
+        if not self._api_key:
+            return await self._fallback.generate(
+                title=title,
+                context_bundle=context_bundle,
+                language=language,
+            )
+        payload = {
+            "title": title,
+            "language": language,
+            "context_bundle": context_bundle,
+        }
+        try:
+            markdown = await self._complete(
+                system_prompt=_BRIEF_SYSTEM_PROMPT,
+                user_payload=payload,
+            )
+        except Exception as exc:  # noqa: BLE001 - generation must degrade safely
+            logger.warning("brief_generator.llm_fallback", extra={"error": str(exc)})
+            return await self._fallback.generate(
+                title=title,
+                context_bundle=context_bundle,
+                language=language,
+            )
+        return _strip_markdown_fence(markdown)
+
+    async def revise(
+        self,
+        *,
+        base_brief: str,
+        revision_instruction: str,
+        context_bundle: dict[str, Any] | str | None,
+        language: str = "zh-CN",
+    ) -> str:
+        if not self._api_key:
+            return await self._fallback.revise(
+                base_brief=base_brief,
+                revision_instruction=revision_instruction,
+                context_bundle=context_bundle,
+                language=language,
+            )
+        payload = {
+            "language": language,
+            "revision_instruction": revision_instruction,
+            "base_brief": base_brief,
+            "context_bundle": context_bundle,
+        }
+        try:
+            markdown = await self._complete(
+                system_prompt=_BRIEF_REVISION_SYSTEM_PROMPT,
+                user_payload=payload,
+            )
+        except Exception as exc:  # noqa: BLE001 - generation must degrade safely
+            logger.warning("brief_revision.llm_fallback", extra={"error": str(exc)})
+            return await self._fallback.revise(
+                base_brief=base_brief,
+                revision_instruction=revision_instruction,
+                context_bundle=context_bundle,
+                language=language,
+            )
+        return _strip_markdown_fence(markdown)
+
+    async def _complete(self, *, system_prompt: str, user_payload: dict[str, Any]) -> str:
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(api_key=self._api_key, base_url=self._base_url or None)
+        response = await client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+            ],
+            temperature=0.35,
+            max_tokens=3500,
+            extra_body=provider_extra_body(self._base_url, self._model) or None,
+            timeout=self._timeout,
+        )
+        return response.choices[0].message.content or ""
+
+
+_BRIEF_SYSTEM_PROMPT = """\
+你是一个面向 PPT 和 Word 交付的中文内容架构师。
+请根据输入上下文生成一份可直接进入演示稿/文档渲染的 Markdown Brief。
+
+要求：
+- 只输出 Markdown，不要代码块，不要解释。
+- 使用中文，一级标题必须是交付标题。
+- 不要写“待补充”“占位符”；信息不足时写清楚合理假设。
+- 内容要具体，适合后续自动切成幻灯片和 Word 章节。
+- 建议结构：背景、目标、关键信息、方案结构、风险与约束、交付建议、下一步。
+"""
+
+
+_BRIEF_REVISION_SYSTEM_PROMPT = """\
+你是一个中文文档修订助手。
+请根据 revision_instruction 修改 base_brief，并结合 context_bundle 补充必要信息。
+只输出修订后的完整 Markdown，不要代码块，不要解释。
+"""
+
+
+def _strip_markdown_fence(text: str) -> str:
+    stripped = (text or "").strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:markdown|md)?\s*", "", stripped, flags=re.I)
+        stripped = re.sub(r"\s*```$", "", stripped)
+    return stripped.rstrip() + "\n"
 
 
 def _extract_context(
@@ -280,6 +420,11 @@ def _make_brief_generate_skill(
                 "content": markdown,
                 "metadata": {
                     "template": "default_project_brief_v1",
+                    "generator": getattr(
+                        brief_generator,
+                        "name",
+                        brief_generator.__class__.__name__,
+                    ),
                     "sections": list(BRIEF_SECTIONS),
                     "source_artifact_ids": source_artifact_ids,
                     "language": language,
@@ -293,7 +438,7 @@ def _make_brief_generate_skill(
         side_effect="read",
         requires_approval=False,
         supports_dry_run=True,
-        timeout_ms=15_000,
+        timeout_ms=60_000,
     )
     return spec, _generate
 
@@ -455,7 +600,7 @@ def _make_brief_revise_skill(
         side_effect="read",
         requires_approval=False,
         supports_dry_run=True,
-        timeout_ms=15_000,
+        timeout_ms=60_000,
     )
     return spec, _revise
 
@@ -510,6 +655,7 @@ __all__ = [
     "BRIEF_SECTIONS",
     "ArtifactContentReader",
     "BriefGenerator",
+    "OpenAICompatibleBriefGenerator",
     "TemplateBriefGenerator",
     "register_internal_document_skills",
 ]

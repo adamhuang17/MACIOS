@@ -6,11 +6,13 @@ retry/recover 如何创建子任务，全部在这里集中。
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 import structlog
 
 from agent_hub.pilot.domain.enums import (
+    ApprovalAction,
     ApprovalStatus,
     ApprovalTargetType,
     EventLevel,
@@ -34,6 +36,20 @@ logger = structlog.get_logger(__name__)
 
 
 Decision = Literal["approve", "reject"]
+_DELETE_BLOCKED_STATUSES = {
+    TaskStatus.PLANNING,
+    TaskStatus.APPROVED,
+    TaskStatus.RUNNING,
+}
+_CANCEL_ON_DELETE_STATUSES = {
+    TaskStatus.CREATED,
+    TaskStatus.AWAITING_APPROVAL,
+    TaskStatus.BLOCKED,
+    TaskStatus.RETRYABLE_FAILED,
+}
+_PAUSABLE_STATUSES = {
+    TaskStatus.RUNNING,
+}
 
 
 class CommandError(RuntimeError):
@@ -166,6 +182,145 @@ class PilotCommandService:
             "recovered_step_id": step_id,
             "requester_id": requester_id,
         }
+
+    # ── pause / delete tasks ────────────────────────
+
+    async def pause_task(self, task_id: str, *, actor_id: str) -> dict[str, object]:
+        """Request a safe pause after the currently running step completes."""
+        task = await self._repo.get_task(task_id)
+        if task is None:
+            msg = f"unknown task: {task_id}"
+            raise LookupError(msg)
+        if task.metadata.get("deleted_at"):
+            msg = f"task {task_id} has been deleted"
+            raise CommandError(msg)
+        if task.metadata.get("pause_requested_at"):
+            return {
+                "task_id": task_id,
+                "task_status": task.status.value,
+                "pause_requested": True,
+            }
+        if task.status not in _PAUSABLE_STATUSES:
+            msg = (
+                f"task {task_id} current status={task.status.value}, "
+                "only running tasks can be paused"
+            )
+            raise CommandError(msg)
+
+        now = datetime.now(UTC)
+        metadata = dict(task.metadata)
+        metadata.update({
+            "pause_requested": True,
+            "pause_requested_at": now.isoformat(),
+            "pause_requested_by": actor_id,
+        })
+        updated = task.model_copy(update={
+            "metadata": metadata,
+            "updated_at": now,
+            "version": task.version + 1,
+        })
+        await self._repo.save(updated, expected_version=task.version)
+        await self._publisher.record(ExecutionEvent(
+            workspace_id=updated.workspace_id,
+            trace_id=updated.trace_id,
+            task_id=updated.task_id,
+            type=EventType.TASK_PROGRESS,
+            level=EventLevel.INFO,
+            message="task pause requested",
+            payload={
+                "pause_requested": True,
+                "pause_requested_by": actor_id,
+                "phase": "pause_requested",
+            },
+            actor_id=actor_id,
+        ))
+        return {
+            "task_id": task_id,
+            "task_status": updated.status.value,
+            "pause_requested": True,
+        }
+
+    async def delete_task(self, task_id: str, *, actor_id: str) -> dict[str, object]:
+        """Soft-delete a task from dashboard views while keeping audit snapshots."""
+        task = await self._repo.get_task(task_id)
+        if task is None:
+            msg = f"unknown task: {task_id}"
+            raise LookupError(msg)
+        if task.metadata.get("deleted_at"):
+            return {
+                "task_id": task_id,
+                "task_status": task.status.value,
+                "deleted": True,
+            }
+        if task.status in _DELETE_BLOCKED_STATUSES:
+            msg = (
+                f"task {task_id} 当前 status={task.status.value}，"
+                "正在执行或即将执行，不能删除"
+            )
+            raise CommandError(msg)
+
+        now = datetime.now(UTC)
+        base_task = task
+        if task.status in _CANCEL_ON_DELETE_STATUSES:
+            base_task = transition(task, TaskAction.CANCEL, patch={
+                "error": task.error or "deleted by user",
+            })
+
+        metadata = dict(base_task.metadata)
+        metadata.update({
+            "deleted_at": now.isoformat(),
+            "deleted_by": actor_id,
+        })
+        deleted_task = base_task.model_copy(update={
+            "metadata": metadata,
+            "updated_at": now,
+            "version": base_task.version if base_task is not task else task.version + 1,
+        })
+        await self._repo.save(deleted_task, expected_version=task.version)
+
+        await self._cancel_requested_approvals(deleted_task)
+        await self._clear_active_task(deleted_task)
+        await self._publisher.record(ExecutionEvent(
+            workspace_id=deleted_task.workspace_id,
+            trace_id=deleted_task.trace_id,
+            task_id=deleted_task.task_id,
+            type=EventType.TASK_STATUS_CHANGED,
+            level=EventLevel.INFO,
+            message="task deleted",
+            payload={
+                "deleted": True,
+                "deleted_by": actor_id,
+                "status": deleted_task.status.value,
+            },
+            actor_id=actor_id,
+        ))
+        return {
+            "task_id": task_id,
+            "task_status": deleted_task.status.value,
+            "deleted": True,
+        }
+
+    async def _cancel_requested_approvals(self, task: Task) -> None:
+        approvals = await self._repo.list_approvals_for_task(
+            task.task_id,
+            workspace_id=task.workspace_id,
+        )
+        for approval in approvals:
+            if approval.status != ApprovalStatus.REQUESTED:
+                continue
+            cancelled = transition(approval, ApprovalAction.CANCEL)
+            await self._repo.save(cancelled, expected_version=approval.version)
+
+    async def _clear_active_task(self, task: Task) -> None:
+        workspace = await self._repo.get_workspace(task.workspace_id)
+        if workspace is None or workspace.active_task_id != task.task_id:
+            return
+        updated = workspace.model_copy(update={
+            "active_task_id": None,
+            "version": workspace.version + 1,
+            "updated_at": datetime.now(UTC),
+        })
+        await self._repo.save(updated, expected_version=workspace.version)
 
     async def _decide_plan(
         self,
