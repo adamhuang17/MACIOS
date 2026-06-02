@@ -392,6 +392,14 @@ _DANGEROUS_OVERRIDE_HINTS = re.compile(
     re.IGNORECASE,
 )
 
+_LLM_GUARD_TRIGGER_HINTS = re.compile(
+    r"prompt|instruction|developer|system|jailbreak|override|ignore|"
+    r"roleplay|base64|sudo|root|leak|泄露|提示词|注入|越权|指令|系统|"
+    r"开发者|角色扮演|绕过|没有限制|无限制|不受限制|xi\s*tong|"
+    r"ti\s*shi|zhi\s*ling",
+    re.IGNORECASE,
+)
+
 
 def _looks_like_benign_reply_request(message: str) -> bool:
     """识别简单的“请回复某句话”请求，避免 LLM Guard 过度拦截。"""
@@ -400,6 +408,16 @@ def _looks_like_benign_reply_request(message: str) -> bool:
     if _DANGEROUS_OVERRIDE_HINTS.search(message):
         return False
     return bool(_BENIGN_REPLY_REQUEST.search(message))
+
+
+def _should_use_llm_guard(message: str) -> bool:
+    """Run semantic guard only when cheap heuristics see injection-like hints."""
+    normalized = message.strip()
+    if not normalized:
+        return False
+    if len(normalized) > 500:
+        return True
+    return bool(_LLM_GUARD_TRIGGER_HINTS.search(normalized))
 
 
 # ── 双层守卫编排 ─────────────────────────────────────
@@ -454,8 +472,18 @@ class PromptGuard:
         if cached is not None:
             return cached
 
-        # 第二层：LLM 语义检测
+        # 第二层：LLM 语义检测，仅对有注入迹象的输入启用。
         if self._llm_guard is not None:
+            if not _should_use_llm_guard(message):
+                result = GuardResult(
+                    is_safe=True,
+                    risk_level="safe",
+                    confidence=1.0,
+                    llm_analysis="LLM guard skipped for low-risk input",
+                )
+                self._remember(cache_key, result)
+                logger.debug("guard.llm.skipped_low_risk")
+                return result
             llm_result = await self._llm_guard.check(message)
             if not llm_result.is_safe:
                 self._remember(cache_key, llm_result)

@@ -323,4 +323,19 @@ def _maybe_build_feishu(
     return client, webhook_service, long_conn
 
 
-__all__ = ["PilotRuntime", "build_pilot_runtime"]
+async def prewarm_feishu_client(client: object | None) -> None:
+    """Best-effort tenant token warmup to avoid first-message send latency."""
+    if client is None:
+        return
+    auth = getattr(client, "_auth", None)
+    get_token = getattr(auth, "get_token", None)
+    if not callable(get_token):
+        return
+    try:
+        await get_token()
+        logger.info("feishu.auth.prewarmed")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("feishu.auth.prewarm_failed", error=str(exc))
+
+
+__all__ = ["PilotRuntime", "build_pilot_runtime", "prewarm_feishu_client"]
